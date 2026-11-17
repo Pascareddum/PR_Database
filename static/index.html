@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Le Schede</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link id="font-link" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar no-print">
+    <span class="deco deco-1"></span><span class="deco deco-3"></span>
+    <a href="#/schede" class="brand">
+      <span class="brand-logo" id="top-logo-wrap" hidden><img id="top-logo" alt=""></span>
+      <span id="top-name">Le Schede</span>
+    </a>
+    <nav>
+      <a href="#/schede" data-nav="schede" data-icon="file">Schede</a>
+      <a href="#/esercizi" data-nav="esercizi" data-icon="dumbbell">Esercizi</a>
+      <a href="#/atleti" data-nav="atleti" data-icon="users">Atleti</a>
+      <a href="#/impostazioni" data-nav="impostazioni" data-icon="palette">La mia grafica</a>
+    </nav>
+    <a href="#/impostazioni" id="update-badge" class="update-badge" hidden title="Aggiornamento disponibile"></a>
+  </header>
+
+  <main id="app"></main>
+
+  <dialog id="modal">
+    <form method="dialog" id="modal-form">
+      <div class="modal-head">
+        <span class="deco deco-1"></span>
+        <h2 id="modal-title"></h2>
+        <button type="button" class="modal-x" id="modal-x" title="Chiudi"></button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" id="modal-cancel">Annulla</button>
+        <button type="submit" class="btn primary" id="modal-ok">Salva</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast no-print"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

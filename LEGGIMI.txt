@@ -1,0 +1,88 @@
+LE SCHEDE - Gestionale schede di allenamento
+=============================================
+
+AVVIO SU WINDOWS
+  Doppio clic su "avvia.bat". Si apre il browser su http://127.0.0.1:5057
+  (la prima volta installa da solo cio' che serve, ci vuole qualche secondo).
+  Per spegnere il programma chiudi la finestra nera.
+  Serve Python 3: se manca, il programma propone di installarlo da solo
+  (oppure scaricalo da https://www.python.org, spuntando "Add python.exe to PATH").
+  Il file "_trova_python.bat" serve agli altri due: lascialo nella cartella.
+
+  In alternativa: "crea_eseguibile.bat" genera dist\LeSchede.exe, che funziona
+  anche su un PC senza Python.
+
+AVVIO SU MAC
+  Doppio clic su "avvia.command". Si apre il browser su http://127.0.0.1:5057.
+  Se Mac blocca il file: tasto destro -> "Apri" -> "Apri" la prima volta.
+  Serve Python 3: se manca, installalo da https://www.python.org/downloads/macos/
+  oppure con Homebrew: brew install python
+
+  In alternativa: "crea_eseguibile.command" genera dist/LeSchede, un unico
+  file che funziona anche su un Mac senza Python installato (stessa
+  architettura: Intel oppure Apple Silicon - per averli entrambi serve
+  ricompilare su un Mac di quel tipo).
+
+COME SI USA
+  1. La mia grafica  -> nome, logo, colori, font, contatti, frase a pie' di pagina.
+  2. Esercizi        -> la tua libreria: nome, gruppo muscolare, attrezzo,
+                        foto (anche incollata con Ctrl+V / Cmd+V) e link all'esecuzione.
+  3. Atleti          -> anagrafica dei tuoi clienti.
+  4. Schede          -> "+ Nuova scheda", poi aggiungi i giorni e in ogni giorno
+                        gli esercizi presi dalla libreria (serie, ripetizioni,
+                        recupero, carico, TUT, note). Ctrl+S (Cmd+S) per salvare.
+     "Apri" mostra la scheda con la tua grafica: "Salva PDF" crea il PDF e
+     chiede dove salvarlo. Nel PDF i nomi degli esercizi e "Guarda l'esecuzione"
+     sono link cliccabili al video. Nel PDF e nella vista ogni giorno di
+     allenamento occupa una pagina propria.
+     Il recupero e' sempre in secondi: se scrivi solo un numero il programma
+     aggiunge da solo il simbolo " (es. 90 -> 90").
+     In Esercizi puoi impostare serie, ripetizioni e recupero predefiniti:
+     vengono compilati da soli quando aggiungi l'esercizio a una scheda.
+
+DATI
+  Tutto resta su questo computer, nella cartella "data":
+    data/schede.db   -> il database (SQLite)
+    data/uploads/    -> foto degli esercizi e logo
+  Per fare un backup copia l'intera cartella "data"
+  (oppure: La mia grafica -> "Scarica backup database").
+
+CONDIVIDERE IL FILE TRA PIU' PERSONE
+  Due modi, scegli quello comodo.
+
+  A) Via file (scambio asincrono):
+     - Chi tiene la copia "master" va in "La mia grafica" -> "Scarica backup database".
+     - Invia il file .db (email, WhatsApp, Drive, Dropbox...).
+     - L'altra persona apre il programma e va in "La mia grafica" ->
+       "Ripristina da file .db" e sceglie il file ricevuto.
+     - Il database precedente NON va perso: viene salvato nella cartella "data"
+       come schede_pre_restore_AAAAMMGG_HHMMSS.db
+
+AGGIORNARE IL PROGRAMMA A PIU' CLIENTI (auto-update)
+  Il programma controlla da solo la pagina Releases di GitHub
+  (repo: Pascareddum/PR_Database).
+  Quando c'e' una nuova versione:
+    - appare un badge giallo "Aggiornamento vX.Y.Z" in alto nella barra;
+    - cliccandolo si va in "La mia grafica" -> "Aggiornamenti programma";
+    - "Aggiorna ora" scarica e installa senza toccare dati, foto e logo;
+    - a fine installazione si chiude la finestra nera e si riapre il programma.
+
+  Per TE (sviluppatore) per rilasciare una nuova versione:
+    1. Modifica il codice.
+    2. Cambia VERSION in app.py (es. "1.0.0" -> "1.1.0").
+    3. Commit + push:
+         git add . && git commit -m "fix recupero" && git push
+    4. Crea un tag con lo stesso numero di versione:
+         git tag v1.1.0 && git push origin v1.1.0
+    5. Su GitHub: Releases -> "Draft a new release" -> scegli il tag v1.1.0
+       -> scrivi le note -> "Publish release".
+    I clienti vedranno il badge entro pochi secondi dall'apertura successiva.
+
+  B) In rete locale (piu' dispositivi contemporaneamente sullo stesso DB):
+     - Avvia il programma con l'opzione --lan:
+         Mac:      apri Terminale nella cartella e scrivi:  ./avvia.command --lan
+         Windows:  apri il Prompt dei comandi e scrivi:     avvia.bat --lan
+     - Nella finestra nera appare un indirizzo tipo http://192.168.x.y:5057
+     - Gli altri PC/telefoni collegati alla stessa rete Wi-Fi aprono quell'indirizzo
+       nel browser e lavorano sullo stesso database.
+     - Importante: il programma deve restare acceso sul PC "master".
