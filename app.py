@@ -29,7 +29,7 @@ ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 PORT = int(os.environ.get("SCHEDE_PORT", "5057"))
 
 # ----- versione + auto-update da GitHub Releases
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 GITHUB_USER = "Pascareddum"
 GITHUB_REPO = "PR_Database"
 

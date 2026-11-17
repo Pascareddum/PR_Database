@@ -341,7 +341,12 @@ dialog form { padding: 0; max-height: calc(100vh - 40px); display: flex; flex-di
 .settings-layout { display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start; }
 .settings-layout .section-title { margin-top: 22px; }
 .settings-layout .card > .section-title:first-child { margin-top: 0; }
-.preview-card { position: sticky; top: 80px; }
+.settings-layout > aside { position: sticky; top: 80px; align-self: start;
+  max-height: calc(100vh - 96px); overflow-y: auto; display: flex; flex-direction: column; gap: 16px;
+  padding-right: 4px; }
+.settings-layout > aside .card { margin: 0; }
+.settings-layout > aside .form-grid { grid-template-columns: 1fr; }
+.preview-card { /* sticky gestito dall'aside intero */ }
 .mini-sheet { border-radius: 14px; overflow: hidden; font-size: .8rem; font-family: var(--brand-font); background: #fff;
   box-shadow: 0 6px 22px color-mix(in srgb, var(--brand-dark) 14%, transparent); border: 1px solid var(--line); }
 .mini-head { position: relative; overflow: hidden; background: var(--grad); color: #fff; padding: 14px 14px 24px; display: flex; gap: 10px; align-items: center;
@@ -501,6 +506,7 @@ dialog form { padding: 0; max-height: calc(100vh - 40px); display: flex; flex-di
   .ex-row .icon-btns { grid-column: span 1; justify-content: flex-end; }
   .ex-row input[data-f=notes] { grid-column: span 2; }
   .settings-layout { grid-template-columns: 1fr; }
+  .settings-layout > aside { position: static; max-height: none; overflow: visible; padding-right: 0; }
   .ex-form { grid-template-columns: 1fr; }
   .hero.compact, .sheet-toolbar, .preview-card { position: static; }
   .topbar { position: relative; }
