@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['../app.py'],
+    ['C:/Users/aless/Desktop/Programmazione/Le schede di Alessio/app.py'],
     pathex=[],
     binaries=[],
-    datas=[('static', 'static')],
+    datas=[('C:/Users/aless/Desktop/Programmazione/Le schede di Alessio/static', 'static')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
