@@ -28,7 +28,7 @@ HEAD_H = 38 * mm              # altezza header prima pagina (sheet-head)
 SMALL_HEAD_H = 12 * mm
 FOOT_H = 14 * mm              # altezza footer gradient
 CONTENT_W = CARD_W - 2 * INNER_PAD_X
-IMG_W, IMG_H = 15 * mm, 11.25 * mm  # 4:3 compatto per 10 esercizi/pagina
+IMG_W, IMG_H = 20 * mm, 15 * mm  # 4:3 leggibile per 10 esercizi/pagina
 
 
 # ===================================================================== utility
@@ -300,16 +300,26 @@ def _icon_layers(c, cx, cy, size, color):
 
 
 def _icon_note(c, cx, cy, size, color):
+    """Matita filled stile simile a _icon_user/_icon_layers (filled shape)."""
     c.saveState()
-    c.setStrokeColor(color)
-    c.setLineWidth(size * 0.11)
-    w, h = size * 0.6, size * 0.75
-    x = cx - w / 2
-    y = cy - h / 2
-    c.rect(x, y, w, h, stroke=1, fill=0)
-    for i in range(3):
-        yy = y + h - (i + 1) * h * 0.22
-        c.line(x + 1, yy, x + w - 1, yy)
+    c.setFillColor(color)
+    c.translate(cx, cy)
+    c.rotate(-45)
+    s = size * 0.55
+    w = s * 0.45
+    h = s * 1.3
+    # corpo matita (rect)
+    c.rect(-w / 2, -h / 2 + s * 0.18, w, h - s * 0.3, stroke=0, fill=1)
+    # punta triangolare
+    p = c.beginPath()
+    p.moveTo(-w / 2, -h / 2 + s * 0.18)
+    p.lineTo(0, -h / 2 - s * 0.22)
+    p.lineTo(w / 2, -h / 2 + s * 0.18)
+    p.close()
+    c.drawPath(p, stroke=0, fill=1)
+    # gomma in alto (rect più chiaro)
+    c.setFillColor(_alpha(color, 0.55))
+    c.rect(-w / 2, h / 2 - s * 0.15, w, s * 0.15, stroke=0, fill=1)
     c.restoreState()
 
 
@@ -353,8 +363,8 @@ class InfoCards(Flowable):
         self.dark = dark
         self.soft = soft
         self.muted = muted
-        self.card_h = 10 * mm
-        self.gap = 1.5 * mm
+        self.card_h = 8 * mm
+        self.gap = 1.2 * mm
         self.h = self.card_h
 
     def wrap(self, aw, ah):
@@ -416,11 +426,11 @@ class SheetNotes(Flowable):
         self.dark = dark
         self.soft = soft
         self.muted = muted
-        self.pad = 2.5 * mm
-        self.icon_box = 5 * mm
-        self.text_x = self.pad + self.icon_box + 2 * mm
-        self._lines = _wrap_lines(text, width - self.text_x - self.pad, "Helvetica", 7.5)
-        self.h = max(9 * mm, self.pad * 2 + len(self._lines) * 9 + 1)
+        self.pad = 2 * mm
+        self.icon_box = 4.5 * mm
+        self.text_x = self.pad + self.icon_box + 1.5 * mm
+        self._lines = _wrap_lines(text, width - self.text_x - self.pad, "Helvetica", 7)
+        self.h = max(7 * mm, self.pad * 2 + len(self._lines) * 8 + 1)
 
     def wrap(self, aw, ah):
         return self.w, self.h
@@ -455,7 +465,7 @@ class DayBanner(Flowable):
         self.w = width
         self.brand = brand
         self.dark = dark
-        self.h = 10 * mm if self.day_notes else 7.5 * mm
+        self.h = 7 * mm if self.day_notes else 5.5 * mm
 
     def wrap(self, aw, ah):
         return self.w, self.h
@@ -520,10 +530,10 @@ class ExerciseCard(Flowable):
         # note vanno a destra della riga params (inline), non in blocco separato
         # calcola altezza componenti
         self._h_title = 3 * mm
-        self._gap_title_params = 0.6 * mm
-        self._h_params = 5.8 * mm if self._params() else 0
-        self._gap_params_link = 0.8 * mm if ex.get("link") else 0
-        self._h_link = 3.6 * mm if ex.get("link") else 0
+        self._gap_title_params = 0.5 * mm
+        self._h_params = 5.5 * mm if self._params() else 0
+        self._gap_params_link = 0.6 * mm if ex.get("link") else 0
+        self._h_link = 3.2 * mm if ex.get("link") else 0
 
         content_h = (self._h_title + self._gap_title_params + self._h_params +
                      self._gap_params_link + self._h_link)
@@ -657,40 +667,32 @@ class ExerciseCard(Flowable):
                     for i, ln in enumerate(lines):
                         c.drawString(text_x, cursor - 2.8 - i * 8, ln)
             cursor -= self._h_params
-        # LINK pill
+        # LINK pill: ancorato al bottom card (allineato con bordo basso + barra sx)
         if link:
-            cursor -= self._gap_params_link
-            pill_y = cursor - self._h_link
+            pill_y = self.PAD
             self._draw_video_pill(c, x, pill_y, link)
 
     def _draw_params(self, c, x, y, w, params):
         """Disegna pill params, ritorna x del right-edge dell'ultimo pill (per note inline)."""
         c.saveState()
-        pw = 11 * mm
-        gap = 0.8 * mm
-        reserve = 20 * mm if self.ex.get("notes") else 0
+        pw = 13 * mm
+        gap = 1 * mm
+        reserve = 22 * mm if self.ex.get("notes") else 0
         avail_w = w - reserve
         total = len(params) * pw + (len(params) - 1) * gap
         if total > avail_w:
             pw = (avail_w - (len(params) - 1) * gap) / len(params)
-            pw = max(pw, 9 * mm)
-        ph = 5.8 * mm
+            pw = max(pw, 10 * mm)
+        ph = 5.5 * mm
         for i, (k, v) in enumerate(params):
             px = x + i * (pw + gap)
             _grad_soft_rect(c, px, y - ph, pw, ph, self.soft, radius=2 * mm, border=_alpha(self.brand, 0.12))
-            # linea decorativa sotto
-            c.saveState()
-            path = c.beginPath()
-            _round_path(path, px, y - ph, pw, ph, 2 * mm)
-            c.clipPath(path, stroke=0, fill=0)
-            _grad_h(c, px + 2 * mm, y - ph - 0.4, pw - 4 * mm, 1.2, self.brand, self.dark, steps=24)
-            c.restoreState()
             c.setFillColor(self.muted)
-            c.setFont("Helvetica-Bold", 4)
-            c.drawString(px + 1.2 * mm, y - 2 * mm, k)
+            c.setFont("Helvetica-Bold", 4.5)
+            c.drawString(px + 1.3 * mm, y - 2.2 * mm, k)
             c.setFillColor(self.dark)
-            c.setFont("Helvetica-Bold", 7)
-            c.drawString(px + 1.2 * mm, y - 4.8 * mm, _truncate(_plain(v), pw - 2.4 * mm, "Helvetica-Bold", 7))
+            c.setFont("Helvetica-Bold", 7.5)
+            c.drawString(px + 1.3 * mm, y - 5.3 * mm, _truncate(_plain(v), pw - 2.6 * mm, "Helvetica-Bold", 7.5))
         c.restoreState()
         return x + len(params) * pw + (len(params) - 1) * gap
 
@@ -716,7 +718,7 @@ class ExerciseCard(Flowable):
         tw = stringWidth(text, "Helvetica-Bold", 6)
         pad_r = 2 * mm
         icon_size = 2.6 * mm
-        pill_h = 3.6 * mm
+        pill_h = 2.8 * mm
         pill_w = icon_size + 2.5 * mm + tw + pad_r
         _grad_rounded(c, x, y, pill_w, pill_h,
                       _mix(self.brand, colors.HexColor("#ff5a5f"), 0.2), self.brand, self.dark,
