@@ -605,16 +605,39 @@ def _ver_tuple(s):
     return tuple(out) if out else (0,)
 
 
-def _fetch_latest_release():
+_RELEASE_CACHE = {"data": None, "fetched": 0.0, "error": None}
+_RELEASE_TTL = 900  # 15 minuti: evita il rate-limit GitHub (60 req/ora/IP anonimi)
+
+
+def _fetch_latest_release(force=False):
+    """Interroga GitHub Releases con cache in-memory. Su rate-limit o errore
+    temporaneo, riusa la cache (se c'è) invece di propagare l'errore."""
     import json as _json
+    import time
+    import urllib.error
     import urllib.request
+    now = time.time()
+    if (not force
+            and _RELEASE_CACHE["data"]
+            and now - _RELEASE_CACHE["fetched"] < _RELEASE_TTL):
+        return _RELEASE_CACHE["data"]
     url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
     req = urllib.request.Request(url, headers={
         "User-Agent": "LeSchede-updater",
         "Accept": "application/vnd.github+json",
     })
-    with urllib.request.urlopen(req, timeout=8) as r:
-        return _json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = _json.loads(r.read())
+        _RELEASE_CACHE["data"] = data
+        _RELEASE_CACHE["fetched"] = now
+        _RELEASE_CACHE["error"] = None
+        return data
+    except Exception as e:
+        _RELEASE_CACHE["error"] = str(e)
+        if _RELEASE_CACHE["data"]:
+            return _RELEASE_CACHE["data"]
+        raise
 
 
 def _pending_restart_version():
@@ -797,10 +820,17 @@ def api_update():
 # Transfer DB + uploads via WiFi locale. Merge conservativo: aggiunge righe
 # mancanti senza mai sovrascrivere dati esistenti sul destinatario.
 SYNC_CODE = {"code": None, "expires": 0}
+LAN_FLAG_FILE = os.path.join(DATA_DIR, ".lan_enabled")
+
+
+def _lan_flag_file_set():
+    return os.path.exists(LAN_FLAG_FILE)
 
 
 def _lan_enabled():
-    return "--lan" in sys.argv or os.environ.get("SCHEDE_LAN") == "1"
+    return ("--lan" in sys.argv
+            or os.environ.get("SCHEDE_LAN") == "1"
+            or _lan_flag_file_set())
 
 
 def _is_lan_ip(ip):
@@ -815,13 +845,24 @@ def _is_lan_ip(ip):
         return False
 
 
+# Endpoint di management (status/enable/disable) utilizzabili anche quando
+# la LAN è disattiva, ma SOLO da localhost — così il cliente può accenderla
+# cliccando dalla UI, senza aprire la rete a terzi se il flag è spento.
+_SYNC_MGMT = {"/api/sync/status", "/api/sync/enable", "/api/sync/disable"}
+
+
 @app.before_request
 def _guard_sync():
     if not request.path.startswith("/api/sync/"):
         return
+    ip = request.remote_addr
+    if request.path in _SYNC_MGMT:
+        if ip not in ("127.0.0.1", "::1", "localhost"):
+            return error("Gestione della rete locale consentita solo dal computer stesso.", 403)
+        return
     if not _lan_enabled():
-        return error("Trasferimento LAN disattivo. Avvia il programma con --lan.", 403)
-    if not _is_lan_ip(request.remote_addr):
+        return error("Trasferimento LAN disattivo. Attivalo dalla pagina 'La mia grafica'.", 403)
+    if not _is_lan_ip(ip):
         return error("Richiesta fuori dalla rete locale.", 403)
 
 
@@ -1109,7 +1150,43 @@ def api_sync_status():
         "lan_enabled": _lan_enabled(),
         "lan_ip": _lan_ip() if _lan_enabled() else None,
         "port": PORT,
+        "can_toggle": not getattr(sys, "frozen", False),
     })
+
+
+@app.post("/api/sync/enable")
+def api_sync_enable():
+    """Attiva rete locale senza che il cliente debba lanciare --lan a mano.
+    Scrive un flag file letto al prossimo boot, poi riavvia il processo."""
+    if getattr(sys, "frozen", False):
+        return error("Non supportato nell'eseguibile precompilato. Riavvia con --lan.", 400)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(LAN_FLAG_FILE, "w", encoding="utf-8") as f:
+            f.write("1")
+    except OSError as e:
+        return error(f"Impossibile scrivere il flag: {e}")
+    threading.Timer(1.0, _relaunch_self).start()
+    return jsonify({"ok": True, "will_restart": True,
+                    "message": "Rete locale in attivazione. Il programma si sta riavviando."})
+
+
+@app.post("/api/sync/disable")
+def api_sync_disable():
+    """Disattiva rete locale rimuovendo il flag e riavviando."""
+    if getattr(sys, "frozen", False):
+        return error("Non supportato nell'eseguibile precompilato.", 400)
+    try:
+        if os.path.exists(LAN_FLAG_FILE):
+            os.remove(LAN_FLAG_FILE)
+    except OSError as e:
+        return error(f"Impossibile rimuovere il flag: {e}")
+    if "--lan" in sys.argv or os.environ.get("SCHEDE_LAN") == "1":
+        return jsonify({"ok": True, "will_restart": False,
+                        "message": "La rete locale era stata attivata da riga di comando: per disattivarla chiudi e riapri il programma senza --lan."})
+    threading.Timer(1.0, _relaunch_self).start()
+    return jsonify({"ok": True, "will_restart": True,
+                    "message": "Rete locale in disattivazione. Il programma si sta riavviando."})
 
 
 @app.errorhandler(413)
@@ -1145,7 +1222,7 @@ def _lan_ip():
 
 
 if __name__ == "__main__":
-    lan = "--lan" in sys.argv or os.environ.get("SCHEDE_LAN") == "1"
+    lan = _lan_enabled()
     host = "0.0.0.0" if lan else "127.0.0.1"
     local_url = f"http://127.0.0.1:{PORT}"
     if "--no-browser" not in sys.argv and "--restarted" not in sys.argv:

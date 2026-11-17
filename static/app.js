@@ -172,6 +172,30 @@ async function loadSettings() {
   applyBranding();
 }
 
+async function toggleLan(on) {
+  const action = on ? "Attivare" : "Disattivare";
+  if (!(await confirmBox(`${action} la rete locale? Il programma si riavvierà in automatico.`))) return;
+  try {
+    const r = await api(on ? "/sync/enable" : "/sync/disable", { method: "POST", body: {} });
+    if (r.will_restart) {
+      openModal({
+        title: on ? "Attivazione in corso" : "Disattivazione in corso",
+        body: `<p>${esc(r.message)}</p>
+               <p class="small muted"><span class="spinner sm"></span> La pagina si ricaricherà da sola tra pochi secondi…</p>`,
+        okLabel: "Attendi…", onSubmit: () => false,
+      });
+      waitForServerBack();
+    } else {
+      openModal({
+        title: "Riavvio manuale",
+        body: `<p>${esc(r.message)}</p>`,
+        okLabel: "Ok", onSubmit: () => true,
+      });
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+
 async function renderSyncCard() {
   const body = document.getElementById("sync-body");
   if (!body) return;
@@ -182,7 +206,16 @@ async function renderSyncCard() {
   if (!st.lan_enabled) {
     body.innerHTML = `
       <p>Permette di <b>importare</b> dati (schede, esercizi, atleti, foto, grafica) da un altro computer sulla stessa rete Wi-Fi. Niente viene sovrascritto: aggiunge solo ciò che manca.</p>
-      <p class="small muted">Per attivarlo chiudi il programma e riavvialo con <code>./avvia.command --lan</code> (Mac) o <code>avvia.bat --lan</code> (Windows) <b>su entrambi i computer</b>.</p>`;
+      ${st.can_toggle ? `
+        <div class="form-grid" style="gap:8px;margin-top:8px">
+          <button class="btn primary sm" id="btn-lan-on">${icon("share")} Attiva rete locale</button>
+        </div>
+        <p class="small muted" style="margin-top:10px">Il programma si riavvierà da solo. Attivalo <b>su entrambi i computer</b> per poter scambiare i dati.</p>`
+        : `<p class="small muted">Nell'eseguibile precompilato non è possibile attivarlo da qui: chiudi e riavvia con <code>./avvia.command --lan</code> (Mac) o <code>avvia.bat --lan</code> (Windows).</p>`
+      }`;
+    if (st.can_toggle) {
+      document.getElementById("btn-lan-on").onclick = () => toggleLan(true);
+    }
     return;
   }
   body.innerHTML = `
@@ -190,8 +223,13 @@ async function renderSyncCard() {
     <div class="form-grid" style="gap:8px;margin-top:8px">
       <button class="btn ghost sm" id="btn-sync-pair">${icon("share")} Genera codice per inviare dati</button>
       <button class="btn primary sm" id="btn-sync-pull">${icon("download")} Ricevi dati da un altro computer</button>
+      ${st.can_toggle ? `<button class="btn ghost sm danger" id="btn-lan-off">${icon("x")} Disattiva rete locale</button>` : ""}
     </div>
-    <p class="small muted" style="margin-top:10px"><b>Come si usa:</b> sul computer <b>sorgente</b> clicca "Genera codice" e leggi il codice nella finestra nera. Sul computer <b>destinazione</b> clicca "Ricevi dati", inserisci l'indirizzo della sorgente e il codice. Il merge è conservativo: le schede, gli esercizi e gli atleti già presenti non vengono toccati.</p>`;
+    <p class="small muted" style="margin-top:10px"><b>Come si usa:</b> sul computer <b>sorgente</b> clicca "Genera codice" e comunica il numero all'altro computer. Sul computer <b>destinazione</b> clicca "Ricevi dati", inserisci l'indirizzo della sorgente e il codice. Il merge è conservativo: le schede, gli esercizi e gli atleti già presenti non vengono toccati.</p>`;
+  if (st.can_toggle) {
+    const off = document.getElementById("btn-lan-off");
+    if (off) off.onclick = () => toggleLan(false);
+  }
   document.getElementById("btn-sync-pair").onclick = async () => {
     try {
       const r = await api("/sync/pair", { method: "POST", body: {} });
@@ -1239,5 +1277,5 @@ async function renderSettings() {
         else { b.hidden = true; b.classList.remove("ready"); }
       }
     } catch { /* server giù, aspetta prossimo tick */ }
-  }, 30000);
+  }, 300000); // 5 min: più lento del cache TTL lato server, evita rate-limit GitHub
 })();
