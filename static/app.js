@@ -226,12 +226,19 @@ async function checkVersion() {
   } catch { VERSION_INFO = null; return; }
   const b = document.getElementById("update-badge");
   if (!b) return;
-  if (VERSION_INFO?.update_available) {
+  if (VERSION_INFO?.pending_restart) {
+    b.hidden = false;
+    b.textContent = `Riavvia per applicare v${VERSION_INFO.pending_restart}`;
+    b.title = `Aggiornamento v${VERSION_INFO.pending_restart} installato. Chiudi e riapri il programma.`;
+    b.classList.add("ready");
+  } else if (VERSION_INFO?.update_available) {
     b.hidden = false;
     b.textContent = `Aggiornamento v${VERSION_INFO.latest}`;
     b.title = `Versione attuale ${VERSION_INFO.current} — disponibile ${VERSION_INFO.latest}`;
+    b.classList.remove("ready");
   } else {
     b.hidden = true;
+    b.classList.remove("ready");
   }
 }
 

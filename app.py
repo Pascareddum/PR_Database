@@ -600,12 +600,22 @@ def _fetch_latest_release():
         return _json.loads(r.read())
 
 
+def _pending_restart_version():
+    try:
+        with open(os.path.join(DATA_DIR, ".pending_restart"), encoding="utf-8") as f:
+            v = f.read().strip()
+            return v or None
+    except OSError:
+        return None
+
+
 @app.get("/api/version")
 def api_version():
+    pending = _pending_restart_version()
     try:
         data = _fetch_latest_release()
     except Exception as e:
-        return jsonify({"current": VERSION, "error": str(e)})
+        return jsonify({"current": VERSION, "error": str(e), "pending_restart": pending})
     tag = data.get("tag_name") or ""
     latest = tag.lstrip("vV")
     zip_url = data.get("zipball_url") or \
@@ -615,6 +625,7 @@ def api_version():
         "latest": latest,
         "tag": tag,
         "update_available": _ver_tuple(latest) > _ver_tuple(VERSION),
+        "pending_restart": pending,
         "notes": data.get("body") or "",
         "name": data.get("name") or tag,
         "published_at": data.get("published_at"),
@@ -640,28 +651,24 @@ def _merge_tree(src, dst):
                 pass
 
 
-@app.post("/api/update")
-def api_update():
-    """Scarica lo ZIP della release più recente da GitHub e sovrascrive i file
-    del programma. NON tocca `data/`, `.venv/`, `.git/`."""
+PENDING_RESTART_FILE = os.path.join(DATA_DIR, ".pending_restart")
+
+
+def _apply_update(info, force=False):
+    """Scarica ZIP della release, sovrascrive file saltando data/.venv/.git/build/dist.
+    Ritorna (ok, result). result = {"installed": <tag>, "no_update": bool} oppure messaggio errore."""
     import shutil
     import tempfile
     import urllib.request
     import zipfile
 
-    payload = request.get_json(force=True) or {}
-    try:
-        info = _fetch_latest_release()
-    except Exception as e:
-        return error(f"Impossibile contattare GitHub: {e}")
     tag = info.get("tag_name") or ""
     latest = tag.lstrip("vV")
-    if _ver_tuple(latest) <= _ver_tuple(VERSION) and not payload.get("force"):
-        return jsonify({"ok": True, "no_update": True, "current": VERSION})
+    if _ver_tuple(latest) <= _ver_tuple(VERSION) and not force:
+        return True, {"no_update": True, "current": VERSION}
     zip_url = info.get("zipball_url") or \
         f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/archive/refs/tags/{tag}.zip"
 
-    # 1) download ZIP in tmp
     tmp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     tmp_zip.close()
     try:
@@ -669,13 +676,10 @@ def api_update():
         with urllib.request.urlopen(req, timeout=120) as r, open(tmp_zip.name, "wb") as out:
             shutil.copyfileobj(r, out)
     except Exception as e:
-        try:
-            os.remove(tmp_zip.name)
-        except OSError:
-            pass
-        return error(f"Download fallito: {e}")
+        try: os.remove(tmp_zip.name)
+        except OSError: pass
+        return False, f"Download fallito: {e}"
 
-    # 2) estrai in tmp dir, trova root (GitHub mette tutto in REPO-TAG/)
     SKIP = {"data", ".venv", "venv", "__pycache__", ".git", ".github", "build", "dist"}
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -683,9 +687,8 @@ def api_update():
                 z.extractall(td)
             roots = [p for p in os.listdir(td) if os.path.isdir(os.path.join(td, p))]
             if not roots:
-                return error("Pacchetto non valido")
+                return False, "Pacchetto non valido"
             src_root = os.path.join(td, roots[0])
-            # 3) sovrascrivi file nel BASE_DIR saltando le cartelle utente
             for name in os.listdir(src_root):
                 if name in SKIP:
                     continue
@@ -699,17 +702,50 @@ def api_update():
                     except PermissionError:
                         pass
     except Exception as e:
-        return error(f"Installazione fallita: {e}")
+        return False, f"Installazione fallita: {e}"
     finally:
-        try:
-            os.remove(tmp_zip.name)
-        except OSError:
-            pass
+        try: os.remove(tmp_zip.name)
+        except OSError: pass
 
+    try:
+        with open(PENDING_RESTART_FILE, "w", encoding="utf-8") as f:
+            f.write(latest)
+    except OSError:
+        pass
+    return True, {"installed": latest, "previous": VERSION}
+
+
+def _auto_update_boot():
+    """Check + install silenzioso all'avvio. Non blocca lo startup."""
+    if getattr(sys, "frozen", False):
+        return
+    try:
+        info = _fetch_latest_release()
+    except Exception:
+        return
+    ok, res = _apply_update(info)
+    if ok and isinstance(res, dict) and res.get("installed"):
+        print(f"\n  [auto-update] Nuova versione {res['installed']} installata. Riavvia per applicarla.\n", flush=True)
+
+
+@app.post("/api/update")
+def api_update():
+    """Scarica lo ZIP della release più recente da GitHub e sovrascrive i file
+    del programma. NON tocca `data/`, `.venv/`, `.git/`."""
+    payload = request.get_json(force=True) or {}
+    try:
+        info = _fetch_latest_release()
+    except Exception as e:
+        return error(f"Impossibile contattare GitHub: {e}")
+    ok, res = _apply_update(info, force=bool(payload.get("force")))
+    if not ok:
+        return error(res)
+    if res.get("no_update"):
+        return jsonify({"ok": True, "no_update": True, "current": VERSION})
     return jsonify({
         "ok": True,
-        "installed": latest,
-        "previous": VERSION,
+        "installed": res["installed"],
+        "previous": res["previous"],
         "message": "Aggiornamento installato. Chiudi e riapri il programma per usare la nuova versione.",
     })
 
@@ -720,6 +756,19 @@ def too_large(_e):
 
 
 init_db()
+
+# Se è stato installato prima un aggiornamento e ora giriamo con quella versione,
+# pulisci il marker 'riavvia per completare'.
+try:
+    _pending = _pending_restart_version()
+    if _pending and _ver_tuple(_pending) <= _ver_tuple(VERSION):
+        os.remove(PENDING_RESTART_FILE)
+except OSError:
+    pass
+
+# Controllo+installazione silenziosa in background (solo in modalità sorgente).
+threading.Thread(target=_auto_update_boot, daemon=True).start()
+
 
 def _lan_ip():
     import socket
