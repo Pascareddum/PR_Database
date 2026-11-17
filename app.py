@@ -605,16 +605,13 @@ def _ver_tuple(s):
     return tuple(out) if out else (0,)
 
 
-_RELEASE_CACHE = {"data": None, "fetched": 0.0, "error": None, "error_at": 0.0}
-_RELEASE_TTL = 900           # cache dati valida: 15 min
-_RELEASE_ERROR_TTL = 1800    # cache errore (rate-limit): 30 min — evita di re-sbattere
+_RELEASE_CACHE = {"data": None, "fetched": 0.0, "error": None}
+_RELEASE_TTL = 900  # 15 minuti: evita il rate-limit GitHub (60 req/ora/IP anonimi)
 
 
 def _fetch_latest_release(force=False):
     """Interroga GitHub Releases con cache in-memory. Su rate-limit o errore
-    temporaneo, riusa la cache (se c'è) invece di propagare l'errore.
-    Se non c'è ancora nessuna cache dati e un errore è recente, rilancia subito
-    senza ritentare la chiamata di rete."""
+    temporaneo, riusa la cache (se c'è) invece di propagare l'errore."""
     import json as _json
     import time
     import urllib.error
@@ -624,11 +621,6 @@ def _fetch_latest_release(force=False):
             and _RELEASE_CACHE["data"]
             and now - _RELEASE_CACHE["fetched"] < _RELEASE_TTL):
         return _RELEASE_CACHE["data"]
-    if (not force
-            and not _RELEASE_CACHE["data"]
-            and _RELEASE_CACHE["error"]
-            and now - _RELEASE_CACHE["error_at"] < _RELEASE_ERROR_TTL):
-        raise RuntimeError(_RELEASE_CACHE["error"])
     url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
     req = urllib.request.Request(url, headers={
         "User-Agent": "LeSchede-updater",
@@ -643,7 +635,6 @@ def _fetch_latest_release(force=False):
         return data
     except Exception as e:
         _RELEASE_CACHE["error"] = str(e)
-        _RELEASE_CACHE["error_at"] = now
         if _RELEASE_CACHE["data"]:
             return _RELEASE_CACHE["data"]
         raise
