@@ -1186,26 +1186,28 @@ async function renderSettings() {
             <div class="mini-foot" id="pv-foot">${esc(s.footer_text)}</div>
           </div>
         </div>
-        <div class="card">
-          <div class="section-title"><span class="info-ico">${icon("database")}</span><h3>Backup &amp; condivisione</h3></div>
-          <p class="small muted">Il database si trova nella cartella <code>data</code>. Scarica periodicamente una copia di sicurezza. Per aggiornare il file tra più persone: scarica il backup, invialo (email/cloud), l'altra persona lo <b>ripristina</b> qui.</p>
-          <div class="form-grid" style="gap:8px">
-            <a class="btn ghost sm" href="/api/backup">${icon("download")} Scarica backup database</a>
-            <label class="btn ghost sm file-btn">${icon("database")} Ripristina da file .db<input type="file" id="restore-file" accept=".db,application/octet-stream" hidden></label>
-          </div>
-          <p class="small muted" style="margin-top:10px"><b>Più dispositivi in rete locale:</b> chiudi il programma e riavvialo con <code>./avvia.command --lan</code> (Mac) o <code>avvia.bat --lan</code> (Windows). Altri PC/telefoni collegati alla stessa rete potranno aprire l'indirizzo mostrato nella finestra nera e lavorare sullo stesso database.</p>
-        </div>
-
-        <div class="card" id="sync-card">
-          <div class="section-title"><span class="info-ico">${icon("share")}</span><h3>Trasferimento dati in rete locale</h3></div>
-          <div id="sync-body" class="small muted">Controllo in corso…</div>
-        </div>
 
         <div class="card" id="update-card">
           <div class="section-title"><span class="info-ico">${icon("download")}</span><h3>Aggiornamenti programma</h3></div>
           <div id="update-body" class="small muted">Controllo in corso…</div>
         </div>
       </aside>
+    </div>
+    <div class="settings-extra">
+      <div class="card">
+        <div class="section-title"><span class="info-ico">${icon("database")}</span><h3>Backup &amp; condivisione</h3></div>
+        <p class="small muted">Il database si trova nella cartella <code>data</code>. Scarica periodicamente una copia di sicurezza. Per aggiornare il file tra più persone: scarica il backup, invialo (email/cloud), l'altra persona lo <b>ripristina</b> qui.</p>
+        <div class="backup-actions">
+          <a class="btn ghost sm" href="/api/backup">${icon("download")} Scarica backup database</a>
+          <label class="btn ghost sm file-btn">${icon("database")} Ripristina da file .db<input type="file" id="restore-file" accept=".db,application/octet-stream" hidden></label>
+        </div>
+        <p class="small muted" style="margin-top:10px"><b>Più dispositivi in rete locale:</b> chiudi il programma e riavvialo con <code>./avvia.command --lan</code> (Mac) o <code>avvia.bat --lan</code> (Windows). Altri PC/telefoni collegati alla stessa rete potranno aprire l'indirizzo mostrato nella finestra nera e lavorare sullo stesso database.</p>
+      </div>
+
+      <div class="card" id="sync-card">
+        <div class="section-title"><span class="info-ico">${icon("share")}</span><h3>Trasferimento dati in rete locale</h3></div>
+        <div id="sync-body" class="small muted">Controllo in corso…</div>
+      </div>
     </div>`;
 
   $$("[data-s]").forEach(el => el.addEventListener("input", () => {

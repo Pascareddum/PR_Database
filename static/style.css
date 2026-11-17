@@ -340,7 +340,7 @@ dialog form { padding: 0; max-height: calc(100vh - 40px); display: flex; flex-di
 .toast.error { background: linear-gradient(135deg, #ef4444, #991b1b); }
 
 /* ---------- impostazioni */
-.settings-layout { display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start; }
+.settings-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
 .settings-layout .section-title { margin-top: 22px; }
 .settings-layout .card > .section-title:first-child { margin-top: 0; }
 .settings-layout > aside { position: sticky; top: 80px; align-self: start;
@@ -348,6 +348,12 @@ dialog form { padding: 0; max-height: calc(100vh - 40px); display: flex; flex-di
   padding-right: 4px; }
 .settings-layout > aside .card { margin: 0; }
 .settings-layout > aside .form-grid { grid-template-columns: 1fr; }
+.settings-extra { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; align-items: start; }
+.settings-extra .card { margin: 0; min-width: 0; }
+.settings-extra .section-title:first-child { margin-top: 0; }
+.backup-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.backup-actions .btn { width: 100%; justify-content: center; white-space: normal; text-align: center; min-width: 0; }
+@media (max-width: 760px) { .settings-extra { grid-template-columns: 1fr; } }
 .preview-card { /* sticky gestito dall'aside intero */ }
 .mini-sheet { border-radius: 14px; overflow: hidden; font-size: .8rem; font-family: var(--brand-font); background: #fff;
   box-shadow: 0 6px 22px color-mix(in srgb, var(--brand-dark) 14%, transparent); border: 1px solid var(--line); }
