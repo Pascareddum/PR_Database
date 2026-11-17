@@ -1,11 +1,11 @@
 #!/bin/bash
 # Le Schede — creazione eseguibile per macOS (PyInstaller)
-# Produce dist/LeSchede (binario) e dist/LeSchede.app (bundle macOS).
-# NOTA: l'app .app funziona sul Mac su cui viene compilata e su Mac con la
-# stessa architettura (Intel oppure Apple Silicon). Per entrambe serve
-# ricompilare su un Mac di quel tipo.
-set -e
+# Produce dist/LeSchede (binario), funziona su Mac senza Python installato
+# (stessa architettura: Intel oppure Apple Silicon).
 cd "$(dirname "$0")"
+
+trap 'echo; echo "  Operazione non riuscita."; read -p "Premi INVIO per chiudere..." _' ERR
+set -e
 
 # ---------------------------------------------------------------- trova Python 3
 PY=""
@@ -26,6 +26,11 @@ echo "  Python trovato: $PY"
 
 # ---------------------------------------------------------------- venv (ricrea se non valido)
 VPY=".venv/bin/python"
+make_venv() {
+  # --copies: evita bug "No such file or directory" del Python di Xcode su macOS.
+  "$PY" -m venv --copies .venv 2>/dev/null || "$PY" -m venv .venv
+}
+
 if [ -x "$VPY" ]; then
   if ! "$VPY" -c "import sys" >/dev/null 2>&1; then
     echo "  Ambiente .venv non valido, lo ricreo..."
@@ -34,7 +39,16 @@ if [ -x "$VPY" ]; then
 fi
 if [ ! -x "$VPY" ]; then
   echo "  Creo l'ambiente .venv..."
-  "$PY" -m venv .venv
+  if ! make_venv; then
+    echo
+    echo "  Non riesco a creare l'ambiente virtuale con il Python di sistema."
+    echo "  Soluzione: installa Python 3 'ufficiale' da"
+    echo "    https://www.python.org/downloads/macos/"
+    echo "  (il Python degli Xcode Command Line Tools a volte dà questo errore)."
+    echo
+    read -p "Premi INVIO per chiudere..." _
+    exit 1
+  fi
 fi
 
 # ---------------------------------------------------------------- dipendenze + pyinstaller

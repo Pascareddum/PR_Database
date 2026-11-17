@@ -1,7 +1,10 @@
 #!/bin/bash
 # Le Schede — avvio per macOS (doppio clic su questo file)
-set -e
 cd "$(dirname "$0")"
+
+# Tiene aperta la finestra del Terminale in caso di errore (per leggere il messaggio).
+trap 'echo; echo "  Avvio non riuscito."; read -p "Premi INVIO per chiudere..." _' ERR
+set -e
 
 # ---------------------------------------------------------------- trova Python 3
 PY=""
@@ -21,6 +24,11 @@ fi
 
 # ---------------------------------------------------------------- venv (ricrea se non valido)
 VPY=".venv/bin/python"
+make_venv() {
+  # --copies: evita bug "No such file or directory" del Python di Xcode su macOS.
+  "$PY" -m venv --copies .venv 2>/dev/null || "$PY" -m venv .venv
+}
+
 if [ -x "$VPY" ]; then
   if ! "$VPY" -c "import sys" >/dev/null 2>&1; then
     echo "  Ambiente .venv non valido, lo ricreo..."
@@ -29,7 +37,16 @@ if [ -x "$VPY" ]; then
 fi
 if [ ! -x "$VPY" ]; then
   echo "  Prima installazione in corso, attendi qualche secondo..."
-  "$PY" -m venv .venv
+  if ! make_venv; then
+    echo
+    echo "  Non riesco a creare l'ambiente virtuale con il Python di sistema."
+    echo "  Soluzione: installa Python 3 'ufficiale' da"
+    echo "    https://www.python.org/downloads/macos/"
+    echo "  (il Python degli Xcode Command Line Tools a volte dà questo errore)."
+    echo
+    read -p "Premi INVIO per chiudere..." _
+    exit 1
+  fi
 fi
 
 # ---------------------------------------------------------------- dipendenze
@@ -39,6 +56,6 @@ if ! "$VPY" -c "import flask, reportlab" >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------- avvio
-# Se vuoi condividere il programma in rete locale (altri PC/telefoni di casa/studio),
-# avvia con: ./avvia.command --lan
+# Per condividere il programma in rete locale (altri PC/telefoni di casa/studio),
+# avvia da Terminale: ./avvia.command --lan
 exec "$VPY" app.py "$@"
