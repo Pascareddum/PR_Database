@@ -12,9 +12,8 @@ AVVIO SU WINDOWS
   In alternativa: "crea_eseguibile.bat" genera dist\LeSchede.exe, che funziona
   anche su un PC senza Python.
 
+
 AVVIO SU MAC (segui l'ordine, la prima volta serve tutto)
-  Serve Python 3: se manca, installalo da https://www.python.org/downloads/macos/
-  oppure con Homebrew (brew install python).
 
   PRIMA VOLTA - passo 1: sblocca i file in Sicurezza
     1. Fai doppio clic su "avvia.command". macOS mostrera' un avviso del tipo
@@ -45,37 +44,9 @@ AVVIO SU MAC (segui l'ordine, la prima volta serve tutto)
     Per spegnere il programma chiudi la finestra nera.
 
   DOPO OGNI AGGIORNAMENTO (importante!)
-    Quando il programma si auto-aggiorna, macOS puo' rimettere i file in
-    quarantena e togliere di nuovo i permessi di esecuzione. Se dopo un
-    aggiornamento il doppio clic non funziona piu' o compare "non puo'
-    essere aperto", ripeti il passo 2 di cui sopra:
-      chmod +x /percorso/avvia.command
-      chmod +x /percorso/crea_eseguibile.command
-    (usa sempre il trucco del "trascina il file nel Terminale" per non
-    sbagliare il percorso).
+  Rieseguire i permessi di esecuzione di chmod solo per avvia.command
 
-  ESEGUIBILE UNICO (opzionale)
-    "crea_eseguibile.command" genera dist/LeSchede, un unico file che
-    funziona anche su un Mac senza Python installato (stessa architettura:
-    Intel oppure Apple Silicon - per averli entrambi serve ricompilare su
-    un Mac di quel tipo).
 
-COME SI USA
-  1. La mia grafica  -> nome, logo, colori, font, contatti, frase a pie' di pagina.
-  2. Esercizi        -> la tua libreria: nome, gruppo muscolare, attrezzo,
-                        foto (anche incollata con Ctrl+V / Cmd+V) e link all'esecuzione.
-  3. Atleti          -> anagrafica dei tuoi clienti.
-  4. Schede          -> "+ Nuova scheda", poi aggiungi i giorni e in ogni giorno
-                        gli esercizi presi dalla libreria (serie, ripetizioni,
-                        recupero, carico, TUT, note). Ctrl+S (Cmd+S) per salvare.
-     "Apri" mostra la scheda con la tua grafica: "Salva PDF" crea il PDF e
-     chiede dove salvarlo. Nel PDF i nomi degli esercizi e "Guarda l'esecuzione"
-     sono link cliccabili al video. Nel PDF e nella vista ogni giorno di
-     allenamento occupa una pagina propria.
-     Il recupero e' sempre in secondi: se scrivi solo un numero il programma
-     aggiunge da solo il simbolo " (es. 90 -> 90").
-     In Esercizi puoi impostare serie, ripetizioni e recupero predefiniti:
-     vengono compilati da soli quando aggiungi l'esercizio a una scheda.
 
 DATI
   Tutto resta su questo computer, nella cartella "data":
