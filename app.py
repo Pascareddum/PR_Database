@@ -29,9 +29,26 @@ ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 PORT = int(os.environ.get("SCHEDE_PORT", "5057"))
 
 # ----- versione + auto-update da GitHub Releases
-VERSION = "1.0.1"
+# VERSION_FALLBACK è l'ancora iniziale: dopo il primo auto-update la versione
+# reale è letta da data/.installed_version, così non serve più ricordarsi di
+# bumpare la costante prima di taggare una release.
+VERSION_FALLBACK = "1.0.1"
 GITHUB_USER = "Pascareddum"
 GITHUB_REPO = "PR_Database"
+
+
+def _read_installed_version():
+    try:
+        with open(os.path.join(DATA_DIR, ".installed_version"), encoding="utf-8") as f:
+            v = f.read().strip().lstrip("vV")
+            if v:
+                return v
+    except OSError:
+        pass
+    return VERSION_FALLBACK
+
+
+VERSION = _read_installed_version()
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -708,16 +725,37 @@ def _apply_update(info, force=False):
         except OSError: pass
 
     try:
+        os.makedirs(DATA_DIR, exist_ok=True)
         with open(PENDING_RESTART_FILE, "w", encoding="utf-8") as f:
+            f.write(latest)
+        with open(os.path.join(DATA_DIR, ".installed_version"), "w", encoding="utf-8") as f:
             f.write(latest)
     except OSError:
         pass
     return True, {"installed": latest, "previous": VERSION}
 
 
+def _relaunch_self():
+    """Sostituisce il processo corrente con se stesso (nuovo codice caricato).
+    Passa il flag --restarted per evitare di riaprire il browser."""
+    try:
+        argv = list(sys.argv)
+        if "--restarted" not in argv:
+            argv.append("--restarted")
+        if getattr(sys, "frozen", False):
+            os.execv(sys.executable, [sys.executable] + argv[1:])
+        else:
+            os.execv(sys.executable, [sys.executable] + argv)
+    except Exception as e:
+        print(f"\n  [auto-update] Riavvio automatico fallito: {e}. Chiudi e riapri manualmente.\n", flush=True)
+
+
 def _auto_update_boot():
-    """Check + install silenzioso all'avvio. Non blocca lo startup."""
+    """Check + install silenzioso all'avvio. Non blocca lo startup. Riavvia se installa."""
     if getattr(sys, "frozen", False):
+        return
+    if "--restarted" in sys.argv:
+        # Appena fatto un restart: non ricontrollare subito, evita cicli.
         return
     try:
         info = _fetch_latest_release()
@@ -725,7 +763,9 @@ def _auto_update_boot():
         return
     ok, res = _apply_update(info)
     if ok and isinstance(res, dict) and res.get("installed"):
-        print(f"\n  [auto-update] Nuova versione {res['installed']} installata. Riavvia per applicarla.\n", flush=True)
+        print(f"\n  [auto-update] Nuova versione {res['installed']} installata. Riavvio in corso...\n", flush=True)
+        # Piccola attesa per far completare eventuali risposte HTTP in volo.
+        threading.Timer(1.5, _relaunch_self).start()
 
 
 @app.post("/api/update")
@@ -742,11 +782,14 @@ def api_update():
         return error(res)
     if res.get("no_update"):
         return jsonify({"ok": True, "no_update": True, "current": VERSION})
+    if not getattr(sys, "frozen", False):
+        threading.Timer(1.5, _relaunch_self).start()
     return jsonify({
         "ok": True,
         "installed": res["installed"],
         "previous": res["previous"],
-        "message": "Aggiornamento installato. Chiudi e riapri il programma per usare la nuova versione.",
+        "will_restart": not getattr(sys, "frozen", False),
+        "message": "Aggiornamento installato. Il programma si sta riavviando...",
     })
 
 
@@ -786,7 +829,7 @@ if __name__ == "__main__":
     lan = "--lan" in sys.argv or os.environ.get("SCHEDE_LAN") == "1"
     host = "0.0.0.0" if lan else "127.0.0.1"
     local_url = f"http://127.0.0.1:{PORT}"
-    if "--no-browser" not in sys.argv:
+    if "--no-browser" not in sys.argv and "--restarted" not in sys.argv:
         threading.Timer(1.2, lambda: webbrowser.open(local_url)).start()
     msg = f"\n  Le Schede è attivo su {local_url}"
     if lan:

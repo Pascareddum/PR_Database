@@ -201,23 +201,50 @@ async function renderUpdateCard() {
 }
 
 async function installUpdate() {
-  if (!(await confirmBox("Scaricare e installare l'aggiornamento? Il database e le foto NON verranno toccati. A fine installazione dovrai chiudere e riaprire il programma."))) return;
+  if (!(await confirmBox("Scaricare e installare l'aggiornamento? Il database e le foto NON verranno toccati. Il programma si riavvierà da solo."))) return;
   const btn = document.getElementById("btn-update");
   if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spinner sm"></span> Installazione…`; }
   try {
     const r = await api("/update", { method: "POST", body: {} });
-    openModal({
-      title: "Aggiornamento installato",
-      body: `<p>Installata versione <b>${esc(r.installed || "nuova")}</b>.</p>
-             <p>Chiudi la finestra nera del programma e riapri <code>avvia.command</code> (Mac) o <code>avvia.bat</code> (Windows) per usare la nuova versione.</p>`,
-      okLabel: "Ho capito",
-      onSubmit: () => true,
-    });
-    checkVersion();
+    if (r.will_restart) {
+      openModal({
+        title: "Aggiornamento installato",
+        body: `<p>Installata versione <b>${esc(r.installed || "nuova")}</b>.</p>
+               <p>Il programma si sta riavviando. Attendi qualche secondo e la pagina si ricaricherà da sola.</p>
+               <p class="small muted"><span class="spinner sm"></span> Riavvio in corso…</p>`,
+        okLabel: "Attendi…",
+        onSubmit: () => false,
+      });
+      waitForServerBack();
+    } else {
+      openModal({
+        title: "Aggiornamento installato",
+        body: `<p>Installata versione <b>${esc(r.installed || "nuova")}</b>.</p>
+               <p>Chiudi la finestra nera del programma e riapri <code>avvia.command</code> (Mac) o <code>avvia.bat</code> (Windows) per usare la nuova versione.</p>`,
+        okLabel: "Ho capito",
+        onSubmit: () => true,
+      });
+      checkVersion();
+    }
   } catch (e) {
     toast(e.message, true);
     if (btn) { btn.disabled = false; btn.innerHTML = `${icon("download")} Aggiorna ora`; }
   }
+}
+
+async function waitForServerBack(maxTries = 60) {
+  // Polla /api/version finché risponde di nuovo, poi ricarica la pagina.
+  for (let i = 0; i < maxTries; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const res = await fetch("/api/version", { cache: "no-store" });
+      if (res.ok) {
+        location.reload();
+        return;
+      }
+    } catch { /* server ancora giù, riprova */ }
+  }
+  toast("Riavvio non completato. Chiudi e riapri manualmente.", true);
 }
 
 async function checkVersion() {
@@ -1110,5 +1137,26 @@ async function renderSettings() {
   try { await loadSettings(); } catch { /* server non raggiungibile */ }
   if (!location.hash) location.hash = "#/schede";
   router();
-  checkVersion(); // in background, non blocca avvio
+  await checkVersion();
+  // Auto-reload se il server si riavvia (auto-update boot): quando torna su con
+  // una versione installata diversa da quella corrente, ricarica la pagina.
+  const BOOT_VERSION = VERSION_INFO?.current;
+  setInterval(async () => {
+    try {
+      const r = await fetch("/api/version", { cache: "no-store" });
+      if (!r.ok) return;
+      const v = await r.json();
+      if (BOOT_VERSION && v.current && v.current !== BOOT_VERSION) {
+        location.reload();
+        return;
+      }
+      VERSION_INFO = v;
+      const b = document.getElementById("update-badge");
+      if (b) {
+        if (v.pending_restart) { b.hidden = false; b.classList.add("ready"); b.textContent = `Riavvia per applicare v${v.pending_restart}`; }
+        else if (v.update_available) { b.hidden = false; b.classList.remove("ready"); b.textContent = `Aggiornamento v${v.latest}`; }
+        else { b.hidden = true; b.classList.remove("ready"); }
+      }
+    } catch { /* server giù, aspetta prossimo tick */ }
+  }, 30000);
 })();
