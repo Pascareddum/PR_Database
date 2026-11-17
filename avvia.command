@@ -49,6 +49,31 @@ if [ ! -x "$VPY" ]; then
   fi
 fi
 
+# ---------------------------------------------------------------- pip nel venv
+# Il Python di Xcode CLT crea venv senza 'pip' (manca 'ensurepip'). Bootstrap.
+if ! "$VPY" -m pip --version >/dev/null 2>&1; then
+  echo "  Preparo pip nel venv..."
+  if ! "$VPY" -m ensurepip --upgrade >/dev/null 2>&1; then
+    if command -v curl >/dev/null 2>&1; then
+      TMP_GETPIP="$(mktemp -t get-pip.XXXXXX.py)"
+      if curl -LsSf https://bootstrap.pypa.io/get-pip.py -o "$TMP_GETPIP"; then
+        "$VPY" "$TMP_GETPIP" --quiet || true
+      fi
+      rm -f "$TMP_GETPIP"
+    fi
+  fi
+  if ! "$VPY" -m pip --version >/dev/null 2>&1; then
+    echo
+    echo "  Non riesco a installare pip nel venv."
+    echo "  Soluzione: installa Python 3 'ufficiale' da"
+    echo "    https://www.python.org/downloads/macos/"
+    echo "  poi elimina la cartella .venv e rilancia questo file."
+    echo
+    read -p "Premi INVIO per chiudere..." _
+    exit 1
+  fi
+fi
+
 # ---------------------------------------------------------------- dipendenze
 if ! "$VPY" -c "import flask, reportlab" >/dev/null 2>&1; then
   echo "  Installo le dipendenze (serve Internet)..."
