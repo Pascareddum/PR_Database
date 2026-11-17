@@ -28,7 +28,7 @@ HEAD_H = 46 * mm              # altezza header prima pagina (sheet-head)
 SMALL_HEAD_H = 13 * mm
 FOOT_H = 20 * mm              # altezza footer gradient
 CONTENT_W = CARD_W - 2 * INNER_PAD_X
-IMG_W, IMG_H = 56 * mm, 42 * mm  # 4:3 come anteprima
+IMG_W, IMG_H = 24 * mm, 18 * mm  # 4:3 compatto per 8-10 esercizi/pagina
 
 
 # ===================================================================== utility
@@ -158,26 +158,27 @@ def _round_path(p, x, y, w, h, r):
 
 # ================================================================ icone SVG-like
 def _icon_phone(c, cx, cy, size, color):
-    """Smartphone: rounded rect verticale + speaker in alto + tasto home in basso."""
+    """Smartphone outline (match HTML SVG): rect verticale + barra tasto home."""
     c.saveState()
-    w = size * 0.52
-    h = size * 0.86
+    c.setStrokeColor(color)
+    c.setLineWidth(size * 0.11)
+    c.setLineCap(1)
+    c.setLineJoin(1)
+    # HTML: rect x=6 y=2 w=12 h=20 rx=2.5 (viewBox 24)
+    w = size * 0.5
+    h = size * 0.83
     x = cx - w / 2
     y = cy - h / 2
-    r = size * 0.1
-    # corpo
-    c.setFillColor(color)
-    c.roundRect(x, y, w, h, r, stroke=0, fill=1)
-    # schermo (bucato con colore sfondo = ritaglio visuale)
-    # per non dipendere dallo sfondo uso rettangolo con alpha ridotto
-    c.setFillColor(_alpha(color, 0.0))  # ritaglio virtuale: skip
-    # speaker (barra orizzontale in alto)
-    c.setFillColor(_alpha(colors.white, 0.9))
-    bar_w = w * 0.35
-    bar_h = size * 0.04
-    c.rect(cx - bar_w / 2, y + h - size * 0.1, bar_w, bar_h, stroke=0, fill=1)
-    # tasto home (cerchio in basso)
-    c.circle(cx, y + size * 0.1, size * 0.055, stroke=0, fill=1)
+    rx = size * 0.104
+    c.roundRect(x, y, w, h, rx, stroke=1, fill=0)
+    # linea tasto home: path M10 18 h4 (viewBox 24)
+    # 10..14 su 24 = centro, y=18 su 24 = relativa
+    bar_w = size * (4 / 24)
+    # posizione y=18: 18/24 = 0.75 dall'alto nel viewBox (y_svg=0 top)
+    # nel nostro canvas invertito: y relativa a cy
+    bar_y = cy - h / 2 + h * (1 - 18 / 20)  # rect viewBox [2..22], 18 è a 16/20 dal basso
+    bar_y = cy - h * 0.33
+    c.line(cx - bar_w / 2, bar_y, cx + bar_w / 2, bar_y)
     c.restoreState()
 
 
@@ -343,7 +344,7 @@ class SheetBackground(Flowable):
 
 
 class InfoCards(Flowable):
-    """Griglia .info-grid con card .info-card (icona + eyebrow + valore)."""
+    """Griglia .info-grid: tutte le card su una sola riga, larghezza divisa equamente."""
     def __init__(self, items, width, brand, dark, soft, muted):
         super().__init__()
         self.items = items  # list[(icon_name, label, value)]
@@ -352,62 +353,42 @@ class InfoCards(Flowable):
         self.dark = dark
         self.soft = soft
         self.muted = muted
-        self.card_h = 14 * mm
-        self.gap = 3 * mm
-        # layout a righe (wrap)
-        self._compute_rows()
-        self.h = len(self.rows) * self.card_h + max(0, len(self.rows) - 1) * self.gap
-
-    def _card_width(self, label, value):
-        lw = stringWidth(label, "Helvetica-Bold", 6.5)
-        vw = stringWidth(_plain(value), "Helvetica-Bold", 10.5)
-        text_w = max(lw, vw)
-        return 15 * mm + text_w + 6 * mm  # icon + text + padding destro
-
-    def _compute_rows(self):
-        rows, row, used = [], [], 0
-        for it in self.items:
-            cw = max(42 * mm, self._card_width(it[1], it[2]))
-            if row and used + cw + self.gap > self.w:
-                rows.append(row)
-                row, used = [], 0
-            row.append((it, cw))
-            used += cw + (self.gap if row else 0)
-        if row:
-            rows.append(row)
-        self.rows = rows
+        self.card_h = 12 * mm
+        self.gap = 2 * mm
+        self.h = self.card_h
 
     def wrap(self, aw, ah):
         return self.w, self.h
 
     def draw(self):
         c = self.canv
-        y = self.h
-        for row in self.rows:
-            x = 0
-            y -= self.card_h
-            for (icon_name, label, value), cw in row:
-                self._draw_card(c, x, y, cw, self.card_h, icon_name, label, value)
-                x += cw + self.gap
-            y -= self.gap
+        n = len(self.items)
+        if n == 0:
+            return
+        cw = (self.w - (n - 1) * self.gap) / n
+        x = 0
+        for icon_name, label, value in self.items:
+            self._draw_card(c, x, 0, cw, self.card_h, icon_name, label, value)
+            x += cw + self.gap
 
     def _draw_card(self, c, x, y, w, h, icon_name, label, value):
-        _grad_soft_rect(c, x, y, w, h, self.soft, radius=10, border=_alpha(self.brand, 0.22))
+        _grad_soft_rect(c, x, y, w, h, self.soft, radius=8, border=_alpha(self.brand, 0.22))
         # icon box
-        ib = 10 * mm
+        ib = 7.5 * mm
         iy = y + (h - ib) / 2
-        ix = x + 2 * mm
+        ix = x + 1.8 * mm
         _grad_rounded(c, ix, iy, ib, ib, _mix(self.brand, colors.HexColor("#ff5a5f"), 0.18),
-                      self.brand, self.dark, radius=2.5 * mm)
-        _get_icon(icon_name)(c, ix + ib / 2, iy + ib / 2, ib * 0.55, colors.white)
-        # testo
-        tx = ix + ib + 3 * mm
+                      self.brand, self.dark, radius=2 * mm)
+        _get_icon(icon_name)(c, ix + ib / 2, iy + ib / 2, ib * 0.6, colors.white)
+        # testo: label in alto, valore in basso con gap chiaro
+        tx = ix + ib + 2.2 * mm
+        avail = w - (tx - x) - 1.5 * mm
         c.setFillColor(self.muted)
-        c.setFont("Helvetica-Bold", 6.5)
-        c.drawString(tx, y + h / 2 + 2.3, label.upper())
+        c.setFont("Helvetica-Bold", 5.5)
+        c.drawString(tx, y + h - 4 * mm, _truncate(label.upper(), avail, "Helvetica-Bold", 5.5))
         c.setFillColor(self.dark)
-        c.setFont("Helvetica-Bold", 10.5)
-        c.drawString(tx, y + h / 2 - 3.5 * mm, _truncate(_plain(value), w - (tx - x) - 2 * mm, "Helvetica-Bold", 10.5))
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(tx, y + 2.6 * mm, _truncate(_plain(value), avail, "Helvetica-Bold", 9))
 
 
 def _get_icon(name):
@@ -467,7 +448,7 @@ class DayBanner(Flowable):
         self.w = width
         self.brand = brand
         self.dark = dark
-        self.h = 20 * mm if self.day_notes else 16 * mm
+        self.h = 15 * mm if self.day_notes else 11.5 * mm
 
     def wrap(self, aw, ah):
         return self.w, self.h
@@ -475,41 +456,42 @@ class DayBanner(Flowable):
     def draw(self):
         c = self.canv
         light = _mix(self.brand, colors.HexColor("#ff5a5f"), 0.18)
-        _grad_rounded(c, 0, 0, self.w, self.h, light, self.brand, self.dark, radius=5 * mm)
+        _grad_rounded(c, 0, 0, self.w, self.h, light, self.brand, self.dark, radius=3.5 * mm)
         # cerchio decorativo top-right
         c.saveState()
         p = c.beginPath()
-        _round_path(p, 0, 0, self.w, self.h, 5 * mm)
+        _round_path(p, 0, 0, self.w, self.h, 3.5 * mm)
         c.clipPath(p, stroke=0, fill=0)
         c.setFillColor(colors.Color(1, 1, 1, alpha=0.16))
-        c.circle(self.w - 10 * mm, self.h + 6 * mm, 35 * mm, stroke=0, fill=1)
+        c.circle(self.w - 8 * mm, self.h + 4 * mm, 22 * mm, stroke=0, fill=1)
         c.restoreState()
         # numero grande semi-trasparente destra
-        c.setFillColor(colors.Color(1, 1, 1, alpha=0.18))
-        c.setFont("Helvetica-Bold", 44)
+        c.setFillColor(colors.Color(1, 1, 1, alpha=0.2))
+        num_font = 28 if self.day_notes else 24
+        c.setFont("Helvetica-Bold", num_font)
         num = f"{self.idx:02d}"
-        tw = stringWidth(num, "Helvetica-Bold", 44)
-        c.drawString(self.w - tw - 10 * mm, self.h / 2 - 7, num)
+        tw = stringWidth(num, "Helvetica-Bold", num_font)
+        c.drawString(self.w - tw - 6 * mm, self.h / 2 - num_font * 0.32, num)
         # testo
         c.setFillColor(colors.Color(1, 1, 1, alpha=0.78))
-        c.setFont("Helvetica-Bold", 7.5)
-        c.drawString(7 * mm, self.h - 6 * mm, f"GIORNO {self.idx}")
+        c.setFont("Helvetica-Bold", 6.5)
+        c.drawString(5 * mm, self.h - 4.2 * mm, f"GIORNO {self.idx}")
         c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 16)
-        c.drawString(7 * mm, self.h - 12 * mm, self.name)
+        c.setFont("Helvetica-Bold", 12.5)
+        c.drawString(5 * mm, self.h - 8.5 * mm, self.name)
         if self.day_notes:
             c.setFillColor(colors.Color(1, 1, 1, alpha=0.85))
-            c.setFont("Helvetica-Oblique", 9)
-            note = _truncate(self.day_notes, self.w - 50 * mm, "Helvetica-Oblique", 9)
-            c.drawString(7 * mm, self.h - 17 * mm, note)
+            c.setFont("Helvetica-Oblique", 7.5)
+            note = _truncate(self.day_notes, self.w - 40 * mm, "Helvetica-Oblique", 7.5)
+            c.drawString(5 * mm, self.h - 12.5 * mm, note)
 
 
 class ExerciseCard(Flowable):
     """Card esercizio: bordo sx gradient brand→dark, immagine 4:3 + titolo + chip + params + note + link."""
     IMG_W = IMG_W
     IMG_H = IMG_H
-    PAD = 4.5 * mm
-    GAP = 6 * mm
+    PAD = 1.8 * mm
+    GAP = 3 * mm
 
     def __init__(self, ex, index, width, brand, dark, soft, muted, line, upload_dir):
         super().__init__()
@@ -531,16 +513,16 @@ class ExerciseCard(Flowable):
         # wrap preventivo note
         self._note_lines = []
         if ex.get("notes"):
-            self._note_lines = _wrap_lines(ex["notes"], self.right_w - 6 * mm, "Helvetica", 8.5)[:3]
+            self._note_lines = _wrap_lines(ex["notes"], self.right_w - 6 * mm, "Helvetica", 7.5)[:2]
 
         # calcola altezza componenti (misure in mm * mm)
-        self._h_title = 6 * mm
-        self._gap_title_params = 3 * mm
-        self._h_params = 11 * mm if self._params() else 0
-        self._gap_params_notes = 3 * mm if self._note_lines else 0
-        self._h_notes = len(self._note_lines) * 11 + 2 if self._note_lines else 0
-        self._gap_notes_link = 3 * mm if ex.get("link") else 0
-        self._h_link = 7 * mm if ex.get("link") else 0
+        self._h_title = 4 * mm
+        self._gap_title_params = 1.2 * mm
+        self._h_params = 7.5 * mm if self._params() else 0
+        self._gap_params_notes = 1.2 * mm if self._note_lines else 0
+        self._h_notes = len(self._note_lines) * 8.5 + 1 if self._note_lines else 0
+        self._gap_notes_link = 1.2 * mm if ex.get("link") else 0
+        self._h_link = 4.8 * mm if ex.get("link") else 0
 
         content_h = (self._h_title + self._gap_title_params + self._h_params +
                      self._gap_params_notes + self._h_notes + self._gap_notes_link + self._h_link)
@@ -605,9 +587,9 @@ class ExerciseCard(Flowable):
         c.setLineWidth(0.5)
         c.roundRect(ix, iy, self.IMG_W, self.IMG_H, 3 * mm, stroke=1, fill=0)
         # badge numero esercizio in alto a sinistra
-        bx = ix + 3
-        by = iy + self.IMG_H - 8 * mm - 3
-        self._draw_num_badge(c, bx, by, 8 * mm, str(self.index + 1))
+        bx = ix + 1.5
+        by = iy + self.IMG_H - 4.5 * mm - 1.5
+        self._draw_num_badge(c, bx, by, 4.5 * mm, str(self.index + 1))
 
     def _draw_placeholder(self, c, ix, iy):
         _grad_h(c, ix, iy, self.IMG_W, self.IMG_H, _mix(self.brand, colors.white, 0.85), colors.white)
@@ -636,19 +618,19 @@ class ExerciseCard(Flowable):
         link = _url(self.ex.get("link"))
         # cursor parte dal top, scende giù
         top = self.h - self.PAD
-        # TITOLO: baseline a top - fontSize*0.8
-        title_baseline = top - 4.2 * mm
+        # TITOLO
+        title_baseline = top - 3 * mm
         name = _plain(self.ex.get("name"))
         c.setFillColor(self.dark)
-        c.setFont("Helvetica-Bold", 12.5)
-        max_name_w = w - 32 * mm
-        name_disp = _truncate(name, max_name_w, "Helvetica-Bold", 12.5)
+        c.setFont("Helvetica-Bold", 9.5)
+        max_name_w = w - 24 * mm
+        name_disp = _truncate(name, max_name_w, "Helvetica-Bold", 9.5)
         c.drawString(x, title_baseline, name_disp)
         if link:
-            tw = stringWidth(name_disp, "Helvetica-Bold", 12.5)
+            tw = stringWidth(name_disp, "Helvetica-Bold", 9.5)
             c.setFillColor(self.brand)
-            c.drawString(x + tw + 3, title_baseline, "»")
-            c.linkURL(link, (x, title_baseline - 2, x + tw, title_baseline + 10),
+            c.drawString(x + tw + 2, title_baseline, "»")
+            c.linkURL(link, (x, title_baseline - 2, x + tw, title_baseline + 8),
                       relative=1, thickness=0)
         # CHIP muscle group a destra, allineato con titolo
         muscle = _plain(self.ex.get("muscle_group")).upper()
@@ -664,11 +646,11 @@ class ExerciseCard(Flowable):
         # NOTES
         if self._note_lines:
             cursor -= self._gap_params_notes
-            _icon_note(c, x + 3, cursor - 2.5, 3.5 * mm, self.brand)
+            _icon_note(c, x + 2, cursor - 2.5, 3 * mm, self.brand)
             c.setFillColor(colors.HexColor("#4a3a3f"))
-            c.setFont("Helvetica", 8.5)
+            c.setFont("Helvetica", 7.5)
             for i, ln in enumerate(self._note_lines):
-                c.drawString(x + 6 * mm, cursor - 4 - i * 11, ln)
+                c.drawString(x + 5 * mm, cursor - 3.5 - i * 9, ln)
             cursor -= self._h_notes
         # LINK pill
         if link:
@@ -678,63 +660,63 @@ class ExerciseCard(Flowable):
 
     def _draw_params(self, c, x, y, w, params):
         c.saveState()
-        pw = 24 * mm
-        gap = 2 * mm
+        pw = 17 * mm
+        gap = 1.2 * mm
         total = len(params) * pw + (len(params) - 1) * gap
         if total > w:
             pw = (w - (len(params) - 1) * gap) / len(params)
-        ph = 11 * mm
+        ph = 7.5 * mm
         for i, (k, v) in enumerate(params):
             px = x + i * (pw + gap)
-            _grad_soft_rect(c, px, y - ph, pw, ph, self.soft, radius=3 * mm, border=_alpha(self.brand, 0.12))
+            _grad_soft_rect(c, px, y - ph, pw, ph, self.soft, radius=2 * mm, border=_alpha(self.brand, 0.12))
             # linea decorativa sotto
             c.saveState()
             path = c.beginPath()
-            _round_path(path, px, y - ph, pw, ph, 3 * mm)
+            _round_path(path, px, y - ph, pw, ph, 2 * mm)
             c.clipPath(path, stroke=0, fill=0)
-            _grad_h(c, px + 3 * mm, y - ph - 0.5, pw - 6 * mm, 1.5, self.brand, self.dark, steps=30)
+            _grad_h(c, px + 2 * mm, y - ph - 0.4, pw - 4 * mm, 1.2, self.brand, self.dark, steps=24)
             c.restoreState()
             c.setFillColor(self.muted)
-            c.setFont("Helvetica-Bold", 6)
-            c.drawString(px + 3 * mm, y - 4 * mm, k)
+            c.setFont("Helvetica-Bold", 5)
+            c.drawString(px + 1.8 * mm, y - 2.8 * mm, k)
             c.setFillColor(self.dark)
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(px + 3 * mm, y - 9 * mm, _truncate(_plain(v), pw - 6 * mm, "Helvetica-Bold", 11))
+            c.setFont("Helvetica-Bold", 8.5)
+            c.drawString(px + 1.8 * mm, y - 6.3 * mm, _truncate(_plain(v), pw - 3.6 * mm, "Helvetica-Bold", 8.5))
         c.restoreState()
 
     def _draw_chip(self, c, x_right, y, text):
-        padx = 3 * mm
+        padx = 2.2 * mm
         c.saveState()
-        c.setFont("Helvetica-Bold", 7)
-        tw = stringWidth(text, "Helvetica-Bold", 7)
+        c.setFont("Helvetica-Bold", 6)
+        tw = stringWidth(text, "Helvetica-Bold", 6)
         chip_w = tw + 2 * padx
-        chip_h = 5.5 * mm
+        chip_h = 4.5 * mm
         cx = x_right - chip_w
-        cy = y - 1 * mm
+        cy = y - 0.5 * mm
         _grad_soft_rect(c, cx, cy, chip_w, chip_h, self.soft, radius=chip_h / 2,
                         border=_alpha(self.brand, 0.25))
         c.setFillColor(self.brand)
-        c.drawString(cx + padx, cy + chip_h / 2 - 2.3, text)
+        c.drawString(cx + padx, cy + chip_h / 2 - 1.9, text)
         c.restoreState()
 
     def _draw_video_pill(self, c, x, y, link):
         c.saveState()
-        c.setFont("Helvetica-Bold", 8)
+        c.setFont("Helvetica-Bold", 7)
         text = "Guarda l'esecuzione"
-        tw = stringWidth(text, "Helvetica-Bold", 8)
-        pad_r = 4 * mm
-        icon_size = 4.5 * mm
-        pill_h = 6.5 * mm
-        pill_w = icon_size + 3 * mm + tw + pad_r
+        tw = stringWidth(text, "Helvetica-Bold", 7)
+        pad_r = 3 * mm
+        icon_size = 3.5 * mm
+        pill_h = 5.2 * mm
+        pill_w = icon_size + 2.5 * mm + tw + pad_r
         _grad_rounded(c, x, y, pill_w, pill_h,
                       _mix(self.brand, colors.HexColor("#ff5a5f"), 0.2), self.brand, self.dark,
                       radius=pill_h / 2)
         # cerchio background icona
         c.setFillColor(_alpha(colors.white, 0.22))
-        c.circle(x + 2 * mm + icon_size / 2, y + pill_h / 2, icon_size / 2, stroke=0, fill=1)
-        _icon_play(c, x + 2 * mm + icon_size / 2, y + pill_h / 2, icon_size * 0.6, colors.white)
+        c.circle(x + 1.5 * mm + icon_size / 2, y + pill_h / 2, icon_size / 2, stroke=0, fill=1)
+        _icon_play(c, x + 1.5 * mm + icon_size / 2, y + pill_h / 2, icon_size * 0.6, colors.white)
         c.setFillColor(colors.white)
-        c.drawString(x + 2 * mm + icon_size + 3 * mm, y + pill_h / 2 - 2.5, text)
+        c.drawString(x + 1.5 * mm + icon_size + 2 * mm, y + pill_h / 2 - 2, text)
         c.linkURL(link, (x, y, x + pill_w, y + pill_h), relative=1, thickness=0)
         c.restoreState()
 
@@ -846,27 +828,35 @@ def build_pdf(program, settings, upload_dir, break_days=False):
             c.setFillColor(_alpha(colors.white, 0.95))
             c.drawString(px + 5, py - 3 * mm, sub)
 
-        # contacts destra
+        # contacts: blocco allineato a destra, dentro il blocco icone colonna SX + testo DX
         cx_right = hx + hw - pad_x
-        gap = 4.5 * mm
+        gap = 7 * mm
+        icon_size = 5 * mm
+        icon_text_gap = 3 * mm
+        # calcola larghezza max testo per allineare icone
+        max_txt_w = 0
+        for _, val in contacts_raw:
+            tw = stringWidth(_plain(val), "Helvetica", 9)
+            if tw > max_txt_w:
+                max_txt_w = tw
+        block_w = icon_size + icon_text_gap + max_txt_w
+        block_right = cx_right
+        icon_col_cx = block_right - block_w + icon_size / 2
+        text_x = icon_col_cx + icon_size / 2 + icon_text_gap
         total_h = max(0, len(contacts_raw) * gap)
         start_y = center_y + total_h / 2 - 2 * mm
         for icon_name, val in contacts_raw:
             val_str = _plain(val)
-            size = 5.5 * mm
-            txt_w = stringWidth(val_str, "Helvetica", 9)
-            # icona cerchio
-            icon_cx = cx_right - txt_w - 4 - size / 2
             icon_cy = start_y
             c.setFillColor(_alpha(colors.white, 0.16))
-            c.circle(icon_cx, icon_cy, size / 2 + 0.6, stroke=0, fill=1)
+            c.circle(icon_col_cx, icon_cy, icon_size / 2 + 0.6, stroke=0, fill=1)
             c.setStrokeColor(_alpha(colors.white, 0.35))
             c.setLineWidth(0.4)
-            c.circle(icon_cx, icon_cy, size / 2 + 0.6, stroke=1, fill=0)
-            _get_icon(icon_name)(c, icon_cx, icon_cy, size * 0.75, colors.white)
+            c.circle(icon_col_cx, icon_cy, icon_size / 2 + 0.6, stroke=1, fill=0)
+            _get_icon(icon_name)(c, icon_col_cx, icon_cy, icon_size * 0.75, colors.white)
             c.setFillColor(colors.white)
             c.setFont("Helvetica", 9)
-            c.drawString(cx_right - txt_w, icon_cy - 2.3, val_str)
+            c.drawString(text_x, icon_cy - 2.3, val_str)
             start_y -= gap
 
     def _draw_sheet_foot(c):
@@ -955,22 +945,26 @@ def build_pdf(program, settings, upload_dir, break_days=False):
         story.append(SheetNotes(program["notes"], CONTENT_W, brand, dark, soft, muted))
         story.append(Spacer(1, 2 * mm))
 
+    # pagina di presentazione finita: esercizi partono dalla pagina successiva
+    if program["days"]:
+        story.append(PageBreak())
+
     for di, day in enumerate(program["days"]):
         if break_days and di > 0:
             story.append(PageBreak())
         else:
-            story.append(Spacer(1, 6 * mm))
+            story.append(Spacer(1, 4 * mm))
         story.append(CondPageBreak(IMG_H + 30 * mm))
         story.append(DayBanner(di + 1, day.get("name"), day.get("notes"), CONTENT_W, brand, dark))
-        story.append(Spacer(1, 3 * mm))
+        story.append(Spacer(1, 2 * mm))
         if not day["exercises"]:
             style_empty = ParagraphStyle("empty", fontName="Helvetica-Oblique", fontSize=9,
                                          textColor=muted, leading=12)
             story.append(Paragraph("Nessun esercizio.", style_empty))
         for ei, ex in enumerate(day["exercises"]):
-            story.append(CondPageBreak(IMG_H + 15 * mm))
+            story.append(CondPageBreak(IMG_H + 6 * mm))
             story.append(ExerciseCard(ex, ei, CONTENT_W, brand, dark, soft, muted, line, upload_dir))
-            story.append(Spacer(1, 3 * mm))
+            story.append(Spacer(1, 1.8 * mm))
 
     buf = io.BytesIO()
     doc = BaseDocTemplate(
