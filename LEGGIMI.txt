@@ -12,16 +12,53 @@ AVVIO SU WINDOWS
   In alternativa: "crea_eseguibile.bat" genera dist\LeSchede.exe, che funziona
   anche su un PC senza Python.
 
-AVVIO SU MAC
-  Doppio clic su "avvia.command". Si apre il browser su http://127.0.0.1:5057.
-  Se Mac blocca il file: tasto destro -> "Apri" -> "Apri" la prima volta.
+AVVIO SU MAC (segui l'ordine, la prima volta serve tutto)
   Serve Python 3: se manca, installalo da https://www.python.org/downloads/macos/
-  oppure con Homebrew: brew install python
+  oppure con Homebrew (brew install python).
 
-  In alternativa: "crea_eseguibile.command" genera dist/LeSchede, un unico
-  file che funziona anche su un Mac senza Python installato (stessa
-  architettura: Intel oppure Apple Silicon - per averli entrambi serve
-  ricompilare su un Mac di quel tipo).
+  PRIMA VOLTA - passo 1: sblocca i file in Sicurezza
+    1. Fai doppio clic su "avvia.command". macOS mostrera' un avviso del tipo
+       "non puo' essere aperto perche' l'identita' dello sviluppatore non e'
+       stata verificata" (oppure "proviene da un autore non identificato"):
+       chiudi il messaggio.
+    2. Apri "Impostazioni di Sistema" (su macOS vecchi: "Preferenze di Sistema")
+       -> "Privacy e Sicurezza".
+    3. Scorri fino in fondo alla pagina: vedrai la riga
+         "avvia.command e' stato bloccato"  con un pulsante "Apri comunque".
+       Clicca "Apri comunque" e conferma con la password del Mac.
+       Si aprira' una finestra nera: lasciala, il programma parte da solo.
+    4. Fai la stessa procedura con "crea_eseguibile.command".
+
+  PRIMA VOLTA - passo 2: dai i permessi di esecuzione (chmod)
+    macOS scaricando il file da internet puo' togliergli i permessi di
+    "eseguibile". Rimettili cosi':
+    1. Apri l'app "Terminale" (Cmd+Spazio -> scrivi "Terminale" -> invio).
+    2. Raggiungi la cartella dove si trovano i file (esempio se si trovano sul desktop scrivi "cd Desktop",
+      nel caso in cui non riesci a trovare le cartelle scrivi "ls" per poter cercare la cartella man mano 
+    3. Scrivi (con lo spazio alla fine, NON premere ancora invio):
+         chmod +x "crea_eseguibile.command" e avvia l'applicazione seguendo le istruzioni
+    4. Fai la stessa cosa per "avvia.command"
+
+  DOPO LA PRIMA VOLTA
+    Per avviare il programma basta un doppio clic su "avvia.command".
+    Si apre il browser su http://127.0.0.1:5057.
+    Per spegnere il programma chiudi la finestra nera.
+
+  DOPO OGNI AGGIORNAMENTO (importante!)
+    Quando il programma si auto-aggiorna, macOS puo' rimettere i file in
+    quarantena e togliere di nuovo i permessi di esecuzione. Se dopo un
+    aggiornamento il doppio clic non funziona piu' o compare "non puo'
+    essere aperto", ripeti il passo 2 di cui sopra:
+      chmod +x /percorso/avvia.command
+      chmod +x /percorso/crea_eseguibile.command
+    (usa sempre il trucco del "trascina il file nel Terminale" per non
+    sbagliare il percorso).
+
+  ESEGUIBILE UNICO (opzionale)
+    "crea_eseguibile.command" genera dist/LeSchede, un unico file che
+    funziona anche su un Mac senza Python installato (stessa architettura:
+    Intel oppure Apple Silicon - per averli entrambi serve ricompilare su
+    un Mac di quel tipo).
 
 COME SI USA
   1. La mia grafica  -> nome, logo, colori, font, contatti, frase a pie' di pagina.
