@@ -60,9 +60,9 @@ rm -rf build
 # NIENTE --windowed: lascia visibile la finestra del Terminale per poter
 # spegnere il programma chiudendola, come su Windows.
 "$VPY" -m PyInstaller --noconfirm --clean --onefile --name LeSchede \
-  --add-data "static:static" \
-  --distpath "dist" --workpath "build" --specpath "build" \
-  app.py
+  --add-data "$PWD/static:static" \
+  --distpath "$PWD/dist" --workpath "$PWD/build" --specpath "$PWD/build" \
+  "$PWD/app.py"
 
 echo
 echo "  Fatto! L'eseguibile si trova in: dist/LeSchede"
