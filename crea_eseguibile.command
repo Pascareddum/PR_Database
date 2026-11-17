@@ -1,66 +1,64 @@
 #!/bin/bash
 # Le Schede — creazione eseguibile per macOS (PyInstaller)
-# Produce dist/LeSchede (binario), funziona su Mac senza Python installato
-# (stessa architettura: Intel oppure Apple Silicon).
+# Installa da solo Python 3.12 in user-space tramite 'uv' (niente password admin,
+# niente Xcode). Produce dist/LeSchede, un unico file che gira anche su Mac
+# senza Python installato (stessa architettura: Intel oppure Apple Silicon).
 cd "$(dirname "$0")"
 
 trap 'echo; echo "  Operazione non riuscita."; read -p "Premi INVIO per chiudere..." _' ERR
 set -e
 
-# ---------------------------------------------------------------- trova Python 3
-PY=""
-for c in python3.12 python3.11 python3.10 python3; do
-  if command -v "$c" >/dev/null 2>&1; then PY="$c"; break; fi
-done
+# 'uv' si installa in ~/.local/bin: aggiungilo al PATH per questa sessione.
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
-if [ -z "$PY" ]; then
+# ---------------------------------------------------------------- 1) uv
+if ! command -v uv >/dev/null 2>&1; then
+  echo "  Installo 'uv' (serve una sola volta, nessuna password richiesta)..."
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "  Errore: 'curl' non disponibile. Riprova con una connessione Internet."
+    read -p "Premi INVIO per chiudere..." _
+    exit 1
+  fi
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+fi
+
+if ! command -v uv >/dev/null 2>&1; then
   echo
-  echo "  Python 3 non trovato."
-  echo "  Installa Python 3 da https://www.python.org/downloads/macos/"
-  echo "  (oppure con Homebrew: brew install python)"
+  echo "  'uv' non trovato dopo l'installazione. Chiudi il Terminale e riapri"
+  echo "  questo file. Se il problema persiste installa Python da"
+  echo "    https://www.python.org/downloads/macos/"
   echo
   read -p "Premi INVIO per chiudere..." _
   exit 1
 fi
-echo "  Python trovato: $PY"
+echo "  uv trovato: $(command -v uv)"
 
-# ---------------------------------------------------------------- venv (ricrea se non valido)
+# ---------------------------------------------------------------- 2) Python 3.12
+echo "  Verifico Python 3.12 (scaricato in ~/.local/share/uv se mancante)..."
+uv python install 3.12
+
+# ---------------------------------------------------------------- 3) venv
 VPY=".venv/bin/python"
-make_venv() {
-  # --copies: evita bug "No such file or directory" del Python di Xcode su macOS.
-  "$PY" -m venv --copies .venv 2>/dev/null || "$PY" -m venv .venv
-}
-
-if [ -x "$VPY" ]; then
-  if ! "$VPY" -c "import sys" >/dev/null 2>&1; then
-    echo "  Ambiente .venv non valido, lo ricreo..."
-    rm -rf .venv
-  fi
+if [ -x "$VPY" ] && ! "$VPY" -c "import sys" >/dev/null 2>&1; then
+  echo "  Ambiente .venv non valido, lo ricreo..."
+  rm -rf .venv
 fi
 if [ ! -x "$VPY" ]; then
-  echo "  Creo l'ambiente .venv..."
-  if ! make_venv; then
-    echo
-    echo "  Non riesco a creare l'ambiente virtuale con il Python di sistema."
-    echo "  Soluzione: installa Python 3 'ufficiale' da"
-    echo "    https://www.python.org/downloads/macos/"
-    echo "  (il Python degli Xcode Command Line Tools a volte dà questo errore)."
-    echo
-    read -p "Premi INVIO per chiudere..." _
-    exit 1
-  fi
+  echo "  Creo .venv con Python 3.12..."
+  uv venv .venv --python 3.12
 fi
 
-# ---------------------------------------------------------------- dipendenze + pyinstaller
+# ---------------------------------------------------------------- 4) dipendenze + pyinstaller
 echo "  Installo le dipendenze (serve Internet la prima volta)..."
-"$VPY" -m pip install --quiet --disable-pip-version-check -r requirements.txt pyinstaller
+uv pip install --python "$VPY" -r requirements.txt pyinstaller
 
-# ---------------------------------------------------------------- build
+# ---------------------------------------------------------------- 5) build
 echo "  Creo l'eseguibile, attendi..."
 rm -rf build
 # Su macOS il separatore di --add-data è ":" (non ";" come su Windows).
-# NIENTE --windowed: vogliamo la finestra del Terminale visibile per poter
-# spegnere il programma (chiudendo la finestra), come succede su Windows.
+# NIENTE --windowed: lascia visibile la finestra del Terminale per poter
+# spegnere il programma chiudendola, come su Windows.
 "$VPY" -m PyInstaller --noconfirm --clean --onefile --name LeSchede \
   --add-data "static:static" \
   --distpath "dist" --workpath "build" --specpath "build" \
