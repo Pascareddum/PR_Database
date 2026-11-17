@@ -254,7 +254,7 @@ async function renderSyncCard() {
           <label>Indirizzo del computer sorgente<input id="sync-host" placeholder="es. 192.168.1.10" autocomplete="off"></label>
           <label>Codice (6 cifre)<input id="sync-code" placeholder="123456" inputmode="numeric" maxlength="6" autocomplete="off"></label>
         </div>`,
-      okLabel: `${icon("download")} Ricevi ora`,
+      okLabel: "Ricevi ora",
       onSubmit: async () => {
         const host = document.getElementById("sync-host").value.trim();
         const code = document.getElementById("sync-code").value.trim();
@@ -292,7 +292,11 @@ async function renderUpdateCard() {
   catch (e) { body.innerHTML = `<p>Impossibile contattare GitHub: ${esc(e.message)}</p>`; return; }
   const v = VERSION_INFO;
   if (v?.error) {
-    body.innerHTML = `<p><b>Versione attuale:</b> ${esc(v.current)}</p><p class="muted">Impossibile verificare aggiornamenti: ${esc(v.error)}</p>`;
+    const isRate = /rate limit|403/i.test(v.error || "");
+    const msg = isRate
+      ? "Troppi controlli recenti sui server GitHub. Riprova tra 15-30 minuti (il programma funziona normalmente)."
+      : `Impossibile verificare aggiornamenti: ${esc(v.error)}`;
+    body.innerHTML = `<p><b>Versione attuale:</b> ${esc(v.current)}</p><p class="muted">${msg}</p>`;
     return;
   }
   const notes = (v.notes || "").trim();
@@ -345,17 +349,16 @@ async function installUpdate() {
   }
 }
 
-async function waitForServerBack(maxTries = 60) {
-  // Polla /api/version finché risponde di nuovo, poi ricarica la pagina.
+async function waitForServerBack(maxTries = 120) {
+  // Polla un endpoint veloce (non chiama GitHub) finché torna, poi reload.
+  // Primo tentativo dopo 300ms per non sprecare un secondo intero se già pronto.
+  await new Promise(r => setTimeout(r, 300));
   for (let i = 0; i < maxTries; i++) {
-    await new Promise(r => setTimeout(r, 1000));
     try {
-      const res = await fetch("/api/version", { cache: "no-store" });
-      if (res.ok) {
-        location.reload();
-        return;
-      }
-    } catch { /* server ancora giù, riprova */ }
+      const res = await fetch("/api/sync/status", { cache: "no-store" });
+      if (res.ok) { location.reload(); return; }
+    } catch { /* server ancora giù */ }
+    await new Promise(r => setTimeout(r, 500));
   }
   toast("Riavvio non completato. Chiudi e riapri manualmente.", true);
 }
