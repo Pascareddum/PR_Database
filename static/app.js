@@ -52,6 +52,7 @@ const ICONS = {
   type: '<path d="M4 7V4h16v3M9 20h6M12 4v16"/>',
   idcard: '<rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8" cy="12" r="2.5"/><path d="M14 10h5M14 14h3"/>',
   cake: '<path d="M20 21v-8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8M4 16s.5-1 2-1 2.5 2 4 2 2.5-2 4-2 2.5 2 4 2 2-1 2-1M2 21h20M7 8v3M12 8v3M17 8v3M7 4h.01M12 4h.01M17 4h.01"/>',
+  share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
 };
 const icon = (n, cls = "ico") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ""}</svg>`;
 
@@ -170,6 +171,80 @@ async function loadSettings() {
   SETTINGS = await api("/settings");
   applyBranding();
 }
+
+async function renderSyncCard() {
+  const body = document.getElementById("sync-body");
+  if (!body) return;
+  body.innerHTML = `<p>Controllo in corso…</p>`;
+  let st;
+  try { st = await api("/sync/status"); }
+  catch (e) { body.innerHTML = `<p>Errore: ${esc(e.message)}</p>`; return; }
+  if (!st.lan_enabled) {
+    body.innerHTML = `
+      <p>Permette di <b>importare</b> dati (schede, esercizi, atleti, foto, grafica) da un altro computer sulla stessa rete Wi-Fi. Niente viene sovrascritto: aggiunge solo ciò che manca.</p>
+      <p class="small muted">Per attivarlo chiudi il programma e riavvialo con <code>./avvia.command --lan</code> (Mac) o <code>avvia.bat --lan</code> (Windows) <b>su entrambi i computer</b>.</p>`;
+    return;
+  }
+  body.innerHTML = `
+    <p>Rete locale attiva. Questo computer è raggiungibile all'indirizzo <code>${esc(st.lan_ip || "?")}:${esc(st.port)}</code>.</p>
+    <div class="form-grid" style="gap:8px;margin-top:8px">
+      <button class="btn ghost sm" id="btn-sync-pair">${icon("share")} Genera codice per inviare dati</button>
+      <button class="btn primary sm" id="btn-sync-pull">${icon("download")} Ricevi dati da un altro computer</button>
+    </div>
+    <p class="small muted" style="margin-top:10px"><b>Come si usa:</b> sul computer <b>sorgente</b> clicca "Genera codice" e leggi il codice nella finestra nera. Sul computer <b>destinazione</b> clicca "Ricevi dati", inserisci l'indirizzo della sorgente e il codice. Il merge è conservativo: le schede, gli esercizi e gli atleti già presenti non vengono toccati.</p>`;
+  document.getElementById("btn-sync-pair").onclick = async () => {
+    try {
+      const r = await api("/sync/pair", { method: "POST", body: {} });
+      openModal({
+        title: "Codice di accoppiamento",
+        body: `<p>${esc(r.message)}</p>
+               <div style="text-align:center;margin:14px 0">
+                 <div style="font:800 2.2rem/1 var(--brand-font);letter-spacing:.25em;color:var(--brand)">${esc(r.code || "")}</div>
+               </div>
+               <p class="small muted">Indirizzo di questo computer: <code>${esc(st.lan_ip || "?")}:${esc(st.port)}</code></p>
+               <p class="small muted">Valido <b>5 minuti</b>, utilizzabile una sola volta.</p>`,
+        okLabel: "Ok", onSubmit: () => true,
+      });
+    } catch (e) { toast(e.message, true); }
+  };
+  document.getElementById("btn-sync-pull").onclick = () => {
+    openModal({
+      title: "Ricevi dati da un altro computer",
+      body: `
+        <p class="small muted">Sul computer sorgente clicca prima "Genera codice". Poi inserisci qui i suoi dati.</p>
+        <div class="form-grid" style="gap:10px">
+          <label>Indirizzo del computer sorgente<input id="sync-host" placeholder="es. 192.168.1.10" autocomplete="off"></label>
+          <label>Codice (6 cifre)<input id="sync-code" placeholder="123456" inputmode="numeric" maxlength="6" autocomplete="off"></label>
+        </div>`,
+      okLabel: `${icon("download")} Ricevi ora`,
+      onSubmit: async () => {
+        const host = document.getElementById("sync-host").value.trim();
+        const code = document.getElementById("sync-code").value.trim();
+        if (!host || !code) { toast("Inserisci indirizzo e codice", true); return false; }
+        try {
+          const r = await api("/sync/pull", { method: "POST", body: { host, code } });
+          const a = r.added || {};
+          const total = Object.values(a).reduce((x, y) => x + (y || 0), 0);
+          openModal({
+            title: total ? "Dati ricevuti" : "Niente di nuovo",
+            body: `<p>${esc(r.message || "")}</p>
+                   <ul style="margin:8px 0 0;padding-left:18px;line-height:1.7">
+                     <li>Esercizi nuovi: <b>${a.exercises || 0}</b></li>
+                     <li>Atleti nuovi: <b>${a.athletes || 0}</b></li>
+                     <li>Schede nuove: <b>${a.programs || 0}</b> (con ${a.program_days || 0} giorni, ${a.day_exercises || 0} esercizi)</li>
+                     <li>Foto / logo copiati: <b>${a.uploads || 0}</b></li>
+                     <li>Voci grafica aggiunte: <b>${a.settings || 0}</b></li>
+                   </ul>`,
+            okLabel: "Ok",
+            onSubmit: () => { location.reload(); return true; },
+          });
+          return true;
+        } catch (e) { toast(e.message, true); return false; }
+      },
+    });
+  };
+}
+
 
 async function renderUpdateCard() {
   const body = document.getElementById("update-body");
@@ -1083,6 +1158,11 @@ async function renderSettings() {
           <p class="small muted" style="margin-top:10px"><b>Più dispositivi in rete locale:</b> chiudi il programma e riavvialo con <code>./avvia.command --lan</code> (Mac) o <code>avvia.bat --lan</code> (Windows). Altri PC/telefoni collegati alla stessa rete potranno aprire l'indirizzo mostrato nella finestra nera e lavorare sullo stesso database.</p>
         </div>
 
+        <div class="card" id="sync-card">
+          <div class="section-title"><span class="info-ico">${icon("share")}</span><h3>Trasferimento dati in rete locale</h3></div>
+          <div id="sync-body" class="small muted">Controllo in corso…</div>
+        </div>
+
         <div class="card" id="update-card">
           <div class="section-title"><span class="info-ico">${icon("download")}</span><h3>Aggiornamenti programma</h3></div>
           <div id="update-body" class="small muted">Controllo in corso…</div>
@@ -1114,6 +1194,7 @@ async function renderSettings() {
     await api("/settings/logo", { method: "DELETE" }); toast("Logo rimosso"); renderSettings();
   });
   renderUpdateCard();
+  renderSyncCard();
   $("#restore-file").onchange = async e => {
     const file = e.target.files[0];
     if (!file) return;
