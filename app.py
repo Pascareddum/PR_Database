@@ -793,6 +793,325 @@ def api_update():
     })
 
 
+# ------------------------------------------------------------- sync LAN (B pulls from A)
+# Transfer DB + uploads via WiFi locale. Merge conservativo: aggiunge righe
+# mancanti senza mai sovrascrivere dati esistenti sul destinatario.
+SYNC_CODE = {"code": None, "expires": 0}
+
+
+def _lan_enabled():
+    return "--lan" in sys.argv or os.environ.get("SCHEDE_LAN") == "1"
+
+
+def _is_lan_ip(ip):
+    if not ip:
+        return False
+    if ip in ("127.0.0.1", "::1", "localhost"):
+        return True
+    import ipaddress
+    try:
+        return ipaddress.ip_address(ip).is_private
+    except ValueError:
+        return False
+
+
+@app.before_request
+def _guard_sync():
+    if not request.path.startswith("/api/sync/"):
+        return
+    if not _lan_enabled():
+        return error("Trasferimento LAN disattivo. Avvia il programma con --lan.", 403)
+    if not _is_lan_ip(request.remote_addr):
+        return error("Richiesta fuori dalla rete locale.", 403)
+
+
+@app.post("/api/sync/pair")
+def api_sync_pair():
+    """Server A: genera codice OTP 6 cifre. Visibile nella finestra nera di A."""
+    import secrets
+    import time
+    SYNC_CODE["code"] = f"{secrets.randbelow(1000000):06d}"
+    SYNC_CODE["expires"] = time.time() + 300
+    print(f"\n  [sync] Codice di accoppiamento: {SYNC_CODE['code']}  (valido 5 min)\n", flush=True)
+    return jsonify({"ok": True, "code": SYNC_CODE["code"],
+                    "expires_in": 300,
+                    "message": "Comunica questo codice all'altro computer."})
+
+
+def _check_sync_code(code):
+    import time
+    if not SYNC_CODE["code"]:
+        return False, "Codice non generato. Sul computer sorgente vai in 'Trasferimento LAN' e clicca 'Genera codice'."
+    if time.time() > SYNC_CODE["expires"]:
+        SYNC_CODE["code"] = None
+        return False, "Codice scaduto. Rigenera il codice."
+    if (code or "").strip() != SYNC_CODE["code"]:
+        return False, "Codice errato."
+    return True, None
+
+
+@app.get("/api/sync/snapshot")
+def api_sync_snapshot():
+    """Server A: produce ZIP con data.json + uploads/."""
+    import json as _json
+    import tempfile
+    import zipfile
+    ok, err = _check_sync_code(request.args.get("code", ""))
+    if not ok:
+        return error(err, 403)
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    try:
+        data = {
+            "version": VERSION,
+            "settings": [dict(r) for r in db.execute("SELECT * FROM settings")],
+            "exercises": [dict(r) for r in db.execute("SELECT * FROM exercises")],
+            "athletes": [dict(r) for r in db.execute("SELECT * FROM athletes")],
+            "programs": [dict(r) for r in db.execute("SELECT * FROM programs")],
+            "program_days": [dict(r) for r in db.execute("SELECT * FROM program_days")],
+            "day_exercises": [dict(r) for r in db.execute("SELECT * FROM day_exercises")],
+        }
+    finally:
+        db.close()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp.close()
+    with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("data.json", _json.dumps(data, ensure_ascii=False))
+        if os.path.isdir(UPLOAD_DIR):
+            for fn in os.listdir(UPLOAD_DIR):
+                fp = os.path.join(UPLOAD_DIR, fn)
+                if os.path.isfile(fp):
+                    z.write(fp, f"uploads/{fn}")
+    SYNC_CODE["code"] = None  # single-use
+    return send_file(tmp.name, as_attachment=True,
+                     download_name="leschede-sync.zip", mimetype="application/zip")
+
+
+def _merge_snapshot(remote):
+    """Merge conservativo in DB locale. Mai sovrascrive righe esistenti.
+    Settings: copia solo le chiavi che localmente hanno ancora il default o sono vuote.
+    Exercises/Athletes/Programs: dedup per nome. Days/Exercises di una scheda: solo
+    se la scheda stessa è nuova (mai modifica schede esistenti)."""
+    added = {"settings": 0, "exercises": 0, "athletes": 0, "programs": 0,
+             "program_days": 0, "day_exercises": 0}
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA foreign_keys = ON")
+    try:
+        # ---- settings
+        local_s = {r["key"]: r["value"] for r in db.execute("SELECT key,value FROM settings")}
+        for s in remote.get("settings", []):
+            k, v = s.get("key"), s.get("value")
+            if not k or v in (None, ""):
+                continue
+            cur_val = local_s.get(k)
+            default = DEFAULT_SETTINGS.get(k)
+            if cur_val in (None, "", default):
+                db.execute(
+                    "INSERT INTO settings(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (k, v))
+                added["settings"] += 1
+
+        # ---- exercises (dedup per nome lowercase)
+        local_ex = {(r["name"] or "").strip().lower(): r["id"]
+                    for r in db.execute("SELECT id,name FROM exercises")}
+        ex_id_map = {}
+        ex_cols = ["name", "muscle_group", "equipment", "description", "image", "link",
+                   "default_sets", "default_reps", "default_rest"]
+        for ex in remote.get("exercises", []):
+            key = (ex.get("name") or "").strip().lower()
+            if not key:
+                continue
+            if key in local_ex:
+                ex_id_map[ex["id"]] = local_ex[key]
+                continue
+            vals = [ex.get(c) for c in ex_cols]
+            cur = db.execute(
+                f"INSERT INTO exercises({','.join(ex_cols)}) VALUES({','.join('?'*len(ex_cols))})",
+                vals)
+            ex_id_map[ex["id"]] = cur.lastrowid
+            local_ex[key] = cur.lastrowid
+            added["exercises"] += 1
+
+        # ---- athletes (dedup per nome+email)
+        local_at = {}
+        for r in db.execute("SELECT id,name,email FROM athletes"):
+            k2 = ((r["name"] or "").strip().lower(), (r["email"] or "").strip().lower())
+            local_at[k2] = r["id"]
+        at_id_map = {}
+        at_cols = ["name", "email", "phone", "birth_date", "goal", "notes"]
+        for at in remote.get("athletes", []):
+            key = ((at.get("name") or "").strip().lower(),
+                   (at.get("email") or "").strip().lower())
+            if not key[0]:
+                continue
+            if key in local_at:
+                at_id_map[at["id"]] = local_at[key]
+                continue
+            vals = [at.get(c) for c in at_cols]
+            cur = db.execute(
+                f"INSERT INTO athletes({','.join(at_cols)}) VALUES({','.join('?'*len(at_cols))})",
+                vals)
+            at_id_map[at["id"]] = cur.lastrowid
+            local_at[key] = cur.lastrowid
+            added["athletes"] += 1
+
+        # ---- programs (dedup per titolo+nome atleta)
+        remote_athletes_by_id = {a["id"]: a for a in remote.get("athletes", [])}
+        local_pr = {}
+        for r in db.execute("""
+            SELECT p.id, p.title, a.name AS aname FROM programs p
+            LEFT JOIN athletes a ON a.id = p.athlete_id
+        """):
+            k3 = ((r["title"] or "").strip().lower(), (r["aname"] or "").strip().lower())
+            local_pr[k3] = r["id"]
+        pr_id_map = {}
+        new_programs = set()  # remote_ids di programmi inseriti ora
+        pr_cols = ["athlete_id", "title", "goal", "start_date", "end_date", "notes"]
+        for pr in remote.get("programs", []):
+            raid = pr.get("athlete_id")
+            aname = ""
+            if raid and raid in remote_athletes_by_id:
+                aname = (remote_athletes_by_id[raid].get("name") or "").strip().lower()
+            key = ((pr.get("title") or "").strip().lower(), aname)
+            if not key[0]:
+                continue
+            if key in local_pr:
+                pr_id_map[pr["id"]] = local_pr[key]
+                continue
+            new_aid = at_id_map.get(raid) if raid else None
+            vals = [new_aid, pr.get("title"), pr.get("goal"),
+                    pr.get("start_date"), pr.get("end_date"), pr.get("notes")]
+            cur = db.execute(
+                f"INSERT INTO programs({','.join(pr_cols)}) VALUES({','.join('?'*len(pr_cols))})",
+                vals)
+            pr_id_map[pr["id"]] = cur.lastrowid
+            local_pr[key] = cur.lastrowid
+            new_programs.add(pr["id"])
+            added["programs"] += 1
+
+        # ---- program_days: solo per schede NUOVE
+        day_id_map = {}
+        for pd in remote.get("program_days", []):
+            rpid = pd.get("program_id")
+            if rpid not in new_programs:
+                continue
+            local_pid = pr_id_map.get(rpid)
+            if not local_pid:
+                continue
+            cur = db.execute(
+                "INSERT INTO program_days(program_id,name,notes,position) VALUES(?,?,?,?)",
+                (local_pid, pd.get("name"), pd.get("notes"), pd.get("position") or 0))
+            day_id_map[pd["id"]] = cur.lastrowid
+            added["program_days"] += 1
+
+        # ---- day_exercises: solo dei days appena creati
+        de_cols = ["day_id", "exercise_id", "sets", "reps", "rest", "load", "tempo",
+                   "notes", "position"]
+        for de in remote.get("day_exercises", []):
+            ldid = day_id_map.get(de.get("day_id"))
+            if not ldid:
+                continue
+            leid = ex_id_map.get(de.get("exercise_id"))
+            if not leid:
+                continue
+            vals = [ldid, leid, de.get("sets"), de.get("reps"), de.get("rest"),
+                    de.get("load"), de.get("tempo"), de.get("notes"),
+                    de.get("position") or 0]
+            db.execute(
+                f"INSERT INTO day_exercises({','.join(de_cols)}) VALUES({','.join('?'*len(de_cols))})",
+                vals)
+            added["day_exercises"] += 1
+
+        db.commit()
+    finally:
+        db.close()
+    return added
+
+
+@app.post("/api/sync/pull")
+def api_sync_pull():
+    """Server B: scarica snapshot da server A e applica merge conservativo.
+    Richiede --lan su B. host accetta 'IP' o 'IP:PORT'."""
+    import json as _json
+    import shutil
+    import tempfile
+    import urllib.error
+    import urllib.request
+    import zipfile
+    payload = request.get_json(force=True) or {}
+    host = (payload.get("host") or "").strip()
+    code = (payload.get("code") or "").strip()
+    if not host or not code:
+        return error("Indica IP del computer sorgente e codice di accoppiamento.")
+    if not re.match(r"^[\d\.:a-fA-F]+$", host):
+        return error("Indirizzo non valido. Usa solo IP (es. 192.168.1.10) o IP:porta.")
+    if ":" not in host:
+        host = f"{host}:{PORT}"
+    # verifica che host sia LAN per non puntare fuori
+    host_ip = host.split(":")[0]
+    if not _is_lan_ip(host_ip):
+        return error("L'indirizzo indicato non è della rete locale.")
+    url = f"http://{host}/api/sync/snapshot?code={code}"
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp.close()
+    try:
+        try:
+            with urllib.request.urlopen(url, timeout=120) as r, open(tmp.name, "wb") as f:
+                shutil.copyfileobj(r, f)
+        except urllib.error.HTTPError as e:
+            try:
+                msg = _json.loads(e.read().decode()).get("error") or str(e)
+            except Exception:
+                msg = str(e)
+            return error(f"Sorgente: {msg}")
+        except Exception as e:
+            return error(f"Impossibile contattare la sorgente: {e}")
+
+        with tempfile.TemporaryDirectory() as td:
+            try:
+                with zipfile.ZipFile(tmp.name) as z:
+                    z.extractall(td)
+            except zipfile.BadZipFile:
+                return error("Pacchetto ricevuto non valido.")
+            data_path = os.path.join(td, "data.json")
+            if not os.path.exists(data_path):
+                return error("Pacchetto incompleto (manca data.json).")
+            with open(data_path, encoding="utf-8") as f:
+                remote = _json.load(f)
+            added = _merge_snapshot(remote)
+            # uploads: copia solo file mancanti
+            up_src = os.path.join(td, "uploads")
+            copied = 0
+            if os.path.isdir(up_src):
+                os.makedirs(UPLOAD_DIR, exist_ok=True)
+                for fn in os.listdir(up_src):
+                    dst = os.path.join(UPLOAD_DIR, fn)
+                    if not os.path.exists(dst):
+                        shutil.copy2(os.path.join(up_src, fn), dst)
+                        copied += 1
+            added["uploads"] = copied
+        return jsonify({"ok": True, "added": added,
+                        "message": "Dati importati senza sovrascrivere nulla."})
+    finally:
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
+
+
+@app.get("/api/sync/status")
+def api_sync_status():
+    """Stato LAN per UI: abilitato? IP locale visibile?"""
+    return jsonify({
+        "lan_enabled": _lan_enabled(),
+        "lan_ip": _lan_ip() if _lan_enabled() else None,
+        "port": PORT,
+    })
+
+
 @app.errorhandler(413)
 def too_large(_e):
     return error("File troppo grande (max 200 MB)", 413)
