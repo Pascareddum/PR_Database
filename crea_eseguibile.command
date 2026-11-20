@@ -51,7 +51,17 @@ fi
 
 # ---------------------------------------------------------------- 4) dipendenze + pyinstaller
 echo "  Installo le dipendenze (serve Internet la prima volta)..."
-uv pip install --python "$VPY" -r requirements.txt pyinstaller
+# charset-normalizer (dipendenza di reportlab) da PyPI arriva come binario
+# "universal2": PyInstaller lo riduce con 'lipo', che richiede Xcode/Command
+# Line Tools funzionanti. La versione pura Python evita del tutto 'lipo'.
+uv pip install --python "$VPY" -r requirements.txt pyinstaller \
+  --no-binary charset-normalizer --reinstall-package charset-normalizer
+
+# Se Xcode è installato ma rotto/non aggiornato, 'lipo' via xcrun fallisce:
+# in quel caso usa i Command Line Tools, se presenti.
+if ! xcrun -f lipo >/dev/null 2>&1 && [ -x /Library/Developer/CommandLineTools/usr/bin/lipo ]; then
+  export DEVELOPER_DIR=/Library/Developer/CommandLineTools
+fi
 
 # ---------------------------------------------------------------- 5) build
 echo "  Creo l'eseguibile, attendi..."
