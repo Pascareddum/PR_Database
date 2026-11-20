@@ -1,2 +1,4 @@
 flask>=3.0
 reportlab>=4.0
+certifi
+truststore>=0.9; python_version >= "3.10"
