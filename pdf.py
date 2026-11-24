@@ -50,7 +50,7 @@ def _render(url: str) -> bytes:
             # Attendi scheda e immagini
             page.wait_for_selector("#sheet", state="attached", timeout=30000)
             page.wait_for_function(
-                "Array.from(document.images).every(i => i.complete && i.naturalWidth > 0)",
+                "Array.from(document.images).every(i => !i.getAttribute('src') || (i.complete && i.naturalWidth > 0))",
                 timeout=20000,
             )
             # Attendi che tutti i font siano effettivamente caricati (await Promise)
