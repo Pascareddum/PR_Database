@@ -734,75 +734,124 @@ async function renderSheet(id) {
     </div>
 
     <article class="sheet" id="sheet">
-      <header class="sheet-head">
-        <span class="deco deco-1"></span><span class="deco deco-2"></span><span class="deco deco-3"></span>
-        <div class="sheet-brand">
-          ${s.logo ? `<div class="logo-tile"><img src="${img(s.logo)}" alt=""></div>` : ""}
-          <div>
-            <div class="sheet-brand-name">${esc(s.brand_name)}</div>
-            <div class="sheet-brand-sub">${esc(s.brand_subtitle)}</div>
+      <div class="page page-cover">
+        <header class="sheet-head">
+          <span class="deco deco-1"></span><span class="deco deco-2"></span><span class="deco deco-3"></span>
+          <div class="sheet-brand">
+            ${s.logo ? `<div class="logo-tile"><img src="${img(s.logo)}" alt=""></div>` : ""}
+            <div>
+              <div class="sheet-brand-name">${esc(s.brand_name)}</div>
+              <div class="sheet-brand-sub">${esc(s.brand_subtitle)}</div>
+            </div>
           </div>
-        </div>
-        ${contacts.length ? `<div class="sheet-contacts">${contacts.join("")}</div>` : ""}
-      </header>
+          ${contacts.length ? `<div class="sheet-contacts">${contacts.join("")}</div>` : ""}
+        </header>
 
-      <section class="sheet-info">
-        <div class="eyebrow">Scheda di allenamento</div>
-        <h1>${esc(p.title)}</h1>
-        <div class="info-grid">
-          ${info.map(([ic, k, v]) => `<div class="info-card"><span class="info-ico">${icon(ic)}</span><div><span>${k}</span><b>${v}</b></div></div>`).join("")}
-        </div>
-        ${p.notes ? `<div class="sheet-notes"><span class="info-ico">${icon("note")}</span><p>${esc(p.notes).replace(/\n/g, "<br>")}</p></div>` : ""}
-      </section>
+        <section class="sheet-info">
+          <div class="eyebrow">Scheda di allenamento</div>
+          <h1>${esc(p.title)}</h1>
+          <div class="info-grid">
+            ${info.map(([ic, k, v]) => `<div class="info-card"><span class="info-ico">${icon(ic)}</span><div><span>${k}</span><b>${v}</b></div></div>`).join("")}
+          </div>
+          ${p.notes ? `<div class="sheet-notes"><span class="info-ico">${icon("note")}</span><p>${esc(p.notes).replace(/\n/g, "<br>")}</p></div>` : ""}
+        </section>
+      </div>
 
       ${p.days.map((d, i) => `
-        <section class="sheet-day">
-          <div class="day-banner">
-            <div><span class="day-eyebrow">Giorno ${i + 1}</span><h2>${esc(d.name)}</h2>
-              ${d.notes ? `<p class="day-note">${esc(d.notes)}</p>` : ""}</div>
-            <span class="day-big">${two(i + 1)}</span>
-          </div>
-          <div class="sheet-ex-list">
-          ${d.exercises.map((e, j) => `
-            <div class="sheet-ex">
-              <div class="sheet-ex-img">
-                ${e.image ? `<img src="${img(e.image)}" alt="${esc(e.name)}">` : `<span class="no-img">${icon("layers")}</span>`}
-                <span class="ex-num">${j + 1}</span>
-              </div>
-              <div class="sheet-ex-body">
-                <div class="sheet-ex-title">
-                  <h3>${e.link ? `<a href="${esc(url(e.link))}" target="_blank" rel="noopener">${esc(e.name)}</a>` : esc(e.name)}</h3>
-                  ${e.muscle_group ? `<span class="chip">${esc(e.muscle_group)}</span>` : ""}
+        <div class="page page-day">
+          <section class="sheet-day">
+            <div class="day-banner">
+              <div><span class="day-eyebrow">Giorno ${i + 1}</span><h2>${esc(d.name)}</h2>
+                ${d.notes ? `<p class="day-note">${esc(d.notes)}</p>` : ""}</div>
+              <span class="day-big">${two(i + 1)}</span>
+            </div>
+            <div class="sheet-ex-list">
+            ${d.exercises.map((e, j) => `
+              <div class="sheet-ex">
+                <div class="sheet-ex-img">
+                  ${e.image ? `<img src="${img(e.image)}" alt="${esc(e.name)}">` : `<span class="no-img">${icon("layers")}</span>`}
                 </div>
-                <div class="sheet-params">
-                  ${e.sets ? `<div><span>Serie</span><b>${esc(e.sets)}</b></div>` : ""}
-                  ${e.reps ? `<div><span>Ripetizioni</span><b>${esc(e.reps)}</b></div>` : ""}
-                  ${e.rest ? `<div><span>Recupero</span><b>${esc(e.rest)}</b></div>` : ""}
-                  ${e.load ? `<div><span>Carico</span><b>${esc(e.load)}</b></div>` : ""}
-                  ${e.tempo ? `<div><span>TUT</span><b>${esc(e.tempo)}</b></div>` : ""}
+                <div class="sheet-ex-body">
+                  <div class="sheet-ex-title">
+                    <h3><span class="ex-num">${j + 1}</span>${e.link ? `<a href="${esc(url(e.link))}" target="_blank" rel="noopener">${esc(e.name)}</a>` : esc(e.name)}</h3>
+                    ${e.muscle_group ? `<span class="chip">${esc(e.muscle_group)}</span>` : ""}
+                  </div>
+                  <div class="sheet-params">
+                    ${e.sets ? `<div><span>Serie</span><b>${esc(e.sets)}</b></div>` : ""}
+                    ${e.reps ? `<div><span>Ripetizioni</span><b>${esc(e.reps)}</b></div>` : ""}
+                    ${e.rest ? `<div><span>Recupero</span><b>${esc(e.rest)}</b></div>` : ""}
+                    ${e.load ? `<div><span>Carico</span><b>${esc(e.load)}</b></div>` : ""}
+                    ${e.tempo ? `<div><span>TUT</span><b>${esc(e.tempo)}</b></div>` : ""}
+                  </div>
+                  ${e.notes ? `<p class="sheet-ex-notes">${icon("note")}<span>${esc(e.notes)}</span></p>` : ""}
+                  ${e.link ? `<a class="sheet-video" href="${esc(url(e.link))}" target="_blank" rel="noopener">${icon("play")} Guarda l'esecuzione</a>` : ""}
                 </div>
-                ${e.notes ? `<p class="sheet-ex-notes">${icon("note")}<span>${esc(e.notes)}</span></p>` : ""}
-                ${e.link ? `<a class="sheet-video" href="${esc(url(e.link))}" target="_blank" rel="noopener">${icon("play")} Guarda l'esecuzione</a>` : ""}
-              </div>
-            </div>`).join("") || `<p class="muted">Nessun esercizio.</p>`}
-          </div>
-        </section>`).join("")}
+              </div>`).join("") || `<p class="muted">Nessun esercizio.</p>`}
+            </div>
+          </section>
+        </div>`).join("")}
 
-      <footer class="sheet-foot">
-        <span class="foot-motto">${esc(s.footer_text)}</span>
-        <span class="foot-brand">${esc(s.brand_name)}</span>
-      </footer>
+      <template id="motto-tpl"><footer class="sheet-foot page-motto">
+          <span class="foot-motto">${esc(s.footer_text)}</span>
+          <span class="foot-brand">${esc(s.brand_name)}</span>
+        </footer></template>
     </article>`;
 
-  $("#sheet").classList.add("break-days");
   $("#save-pdf").onclick = () => savePdf(p);
+  // Dopo layout iniziale, splitta pagine giorno se overflow
+  requestAnimationFrame(() => requestAnimationFrame(splitOverflowPages));
+}
+
+function splitOverflowPages() {
+  const PAGE_H = 1123;
+  const pages = [...document.querySelectorAll(".page-day")];
+  pages.forEach(page => {
+    let cur = page;
+    let guard = 0;
+    while (cur.scrollHeight > PAGE_H + 2 && guard++ < 20) {
+      const list = cur.querySelector(".sheet-ex-list");
+      if (!list || list.children.length <= 1) break;
+      const dayEl = cur.querySelector(".sheet-day");
+      const banner = dayEl.querySelector(".day-banner");
+      const newPage = document.createElement("div");
+      newPage.className = "page page-day page-day-cont";
+      const newDay = document.createElement("section");
+      newDay.className = "sheet-day";
+      const bannerClone = banner.cloneNode(true);
+      bannerClone.classList.add("day-banner-cont");
+      newDay.appendChild(bannerClone);
+      const newList = document.createElement("div");
+      newList.className = "sheet-ex-list";
+      newDay.appendChild(newList);
+      newPage.appendChild(newDay);
+      cur.after(newPage);
+      while (cur.scrollHeight > PAGE_H + 2 && list.children.length > 1) {
+        const last = list.lastElementChild;
+        newList.insertBefore(last, newList.firstChild);
+      }
+      cur = newPage;
+    }
+  });
+  addPageFooters();
+}
+
+function addPageFooters() {
+  const sheet = document.querySelector("#sheet");
+  if (!sheet) return;
+  const tpl = document.querySelector("#motto-tpl");
+  if (!tpl) return;
+  const pages = [...sheet.querySelectorAll(".page")];
+  pages.forEach(pg => {
+    pg.querySelector(".page-motto")?.remove();
+    const clone = tpl.content.firstElementChild.cloneNode(true);
+    pg.appendChild(clone);
+  });
 }
 
 async function savePdf(p) {
   const fileName = ["Scheda", p.title, p.athlete_name].filter(Boolean).join(" - ").replace(/[\\/:*?"<>|]+/g, "").trim() + ".pdf";
   const pdfUrl = `/api/programs/${p.id}/pdf`;
   const btn = $("#save-pdf");
-  // Edge/Chrome: finestra "Salva con nome" per scegliere cartella e nome del file
   if (window.showSaveFilePicker) {
     let handle;
     try {
@@ -811,7 +860,7 @@ async function savePdf(p) {
         types: [{ description: "Documento PDF", accept: { "application/pdf": [".pdf"] } }],
       });
     } catch (e) {
-      if (e.name === "AbortError") return; // annullato dall'utente
+      if (e.name === "AbortError") return;
       handle = null;
     }
     if (handle) {
@@ -828,7 +877,6 @@ async function savePdf(p) {
       return;
     }
   }
-  // altri browser: download diretto nella cartella Download
   const a = document.createElement("a");
   a.href = pdfUrl; a.download = fileName;
   document.body.appendChild(a); a.click(); a.remove();

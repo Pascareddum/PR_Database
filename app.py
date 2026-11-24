@@ -539,8 +539,12 @@ def program_pdf(pid):
     p = load_program(pid)
     if not p:
         return error("Scheda non trovata", 404)
-    settings = {r["key"]: r["value"] for r in get_db().execute("SELECT * FROM settings")}
-    data = build_pdf(p, settings, UPLOAD_DIR, break_days=True)
+    base = request.host_url.rstrip("/")
+    url = f"{base}/#/scheda/{pid}"
+    try:
+        data = build_pdf(url)
+    except Exception as e:
+        return error(f"Errore generazione PDF: {e}", 500)
     name = " - ".join(x for x in ("Scheda", p["title"], p.get("athlete_name")) if x)
     name = re.sub(r'[\\/:*?"<>|]+', "", name).strip() + ".pdf"
     return send_file(io.BytesIO(data), mimetype="application/pdf", as_attachment=True, download_name=name)
@@ -1232,4 +1236,4 @@ if __name__ == "__main__":
         msg += f"\n  In rete locale: http://{_lan_ip()}:{PORT}  (apri questo indirizzo dagli altri dispositivi)"
     msg += "\n  Chiudi questa finestra per spegnere il programma.\n"
     print(msg)
-    app.run(host=host, port=PORT, debug=False)
+    app.run(host=host, port=PORT, debug=False, threaded=True)

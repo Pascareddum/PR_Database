@@ -1,996 +1,134 @@
-"""Generazione del PDF della scheda - replica l'anteprima HTML il più fedelmente possibile.
+"""PDF generation via Playwright (headless Chromium).
 
-Architettura: BaseDocTemplate con page templates che disegnano header/footer su canvas,
-e un insieme di Flowable custom per i blocchi complessi (info-card, day-banner, exercise).
+Renders the sheet exactly as it appears on screen (not print media), then prints
+to PDF. Produces a near-pixel copy of the browser preview.
 """
-import io
-import math
-import os
-import re
-from xml.sax.saxutils import escape
+from __future__ import annotations
 
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.units import mm
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfbase.pdfmetrics import stringWidth
-from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Flowable, Frame, PageBreak,
-                                PageTemplate, Paragraph, Spacer)
+import subprocess
+import sys
 
-PAGE_W, PAGE_H = A4
-MARGIN_X = 14 * mm            # margine esterno della card .sheet
-INNER_PAD_X = 14 * mm         # padding orizzontale dentro la card (sheet-info / sheet-day)
-CARD_X = MARGIN_X
-CARD_W = PAGE_W - 2 * MARGIN_X
-HEAD_H = 38 * mm              # altezza header prima pagina (sheet-head)
-SMALL_HEAD_H = 12 * mm
-FOOT_H = 14 * mm              # altezza footer gradient
-CONTENT_W = CARD_W - 2 * INNER_PAD_X
-IMG_W, IMG_H = 20 * mm, 15 * mm  # 4:3 leggibile per 10 esercizi/pagina
+from playwright.sync_api import sync_playwright, Error as PWError
 
 
-# ===================================================================== utility
-def _hex(v, default):
+def _install_chromium():
+    """Scarica Chromium al primo utilizzo (serve per eseguibile distribuito)."""
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        check=True,
+    )
+
+
+def build_pdf(url: str) -> bytes:
     try:
-        return colors.HexColor(v or default)
-    except Exception:
-        return colors.HexColor(default)
-
-
-def _mix(c1, c2, t):
-    return colors.Color(
-        c1.red + (c2.red - c1.red) * t,
-        c1.green + (c2.green - c1.green) * t,
-        c1.blue + (c2.blue - c1.blue) * t,
-    )
-
-
-def _alpha(c, a):
-    return colors.Color(c.red, c.green, c.blue, alpha=a)
-
-
-def _t(v):
-    return escape(str(v or "")).replace("\n", "<br/>")
-
-
-def _plain(v):
-    return str(v or "")
-
-
-def _url(link):
-    link = (link or "").strip()
-    if not link:
-        return ""
-    return link if re.match(r"^https?://", link, re.I) else "https://" + link
-
-
-def _fmt_date(d):
-    if not d:
-        return ""
-    p = d.split("-")
-    return f"{p[2]}/{p[1]}/{p[0]}" if len(p) == 3 else d
-
-
-def _truncate(text, max_w, font, size):
-    if stringWidth(text, font, size) <= max_w:
-        return text
-    while text and stringWidth(text + "…", font, size) > max_w:
-        text = text[:-1]
-    return text + "…"
-
-
-def _wrap_lines(text, max_w, font, size):
-    """Wrap very basic per testo semplice (contact right column)."""
-    out, line = [], ""
-    for word in str(text).split():
-        trial = (line + " " + word).strip()
-        if stringWidth(trial, font, size) <= max_w:
-            line = trial
-        else:
-            if line:
-                out.append(line)
-            line = word
-    if line:
-        out.append(line)
-    return out
-
-
-# ===================================================================== gradient
-def _grad_diag(c, x, y, w, h, c1, c2, c3, steps=80):
-    """Gradiente diagonale a 3 stop come CSS --grad.
-    Implementato come orizzontale (approssimazione: il clip-path cambia l'inclinazione percepita).
-    """
-    sw = w / steps
-    for i in range(steps):
-        t = i / (steps - 1)
-        col = _mix(c1, c2, t * 2) if t < 0.5 else _mix(c2, c3, (t - 0.5) * 2)
-        c.setFillColor(col)
-        c.rect(x + i * sw, y, sw + 0.6, h, stroke=0, fill=1)
-
-
-def _grad_h(c, x, y, w, h, c1, c2, steps=80):
-    sw = w / steps
-    for i in range(steps):
-        t = i / (steps - 1)
-        c.setFillColor(_mix(c1, c2, t))
-        c.rect(x + i * sw, y, sw + 0.6, h, stroke=0, fill=1)
-
-
-def _grad_soft_rect(c, x, y, w, h, brand_soft, radius=14, border=None):
-    """Riempie un rounded rect con gradiente soft (brand-soft -> bianco), aggiunge bordo opzionale."""
-    c.saveState()
-    p = c.beginPath()
-    _round_path(p, x, y, w, h, radius)
-    c.clipPath(p, stroke=0, fill=0)
-    _grad_h(c, x, y, w, h, brand_soft, colors.white, steps=40)
-    c.restoreState()
-    if border:
-        c.setStrokeColor(border)
-        c.setLineWidth(0.6)
-        c.roundRect(x, y, w, h, radius, stroke=1, fill=0)
-
-
-def _grad_rounded(c, x, y, w, h, c1, c2, c3, radius=16):
-    """Rounded rect riempito con gradient diagonale a 3 stop."""
-    c.saveState()
-    p = c.beginPath()
-    _round_path(p, x, y, w, h, radius)
-    c.clipPath(p, stroke=0, fill=0)
-    _grad_diag(c, x, y, w, h, c1, c2, c3)
-    c.restoreState()
-
-
-def _round_path(p, x, y, w, h, r):
-    r = min(r, w / 2, h / 2)
-    p.moveTo(x + r, y)
-    p.lineTo(x + w - r, y)
-    p.arcTo(x + w - 2 * r, y, x + w, y + 2 * r, startAng=270, extent=90)
-    p.lineTo(x + w, y + h - r)
-    p.arcTo(x + w - 2 * r, y + h - 2 * r, x + w, y + h, startAng=0, extent=90)
-    p.lineTo(x + r, y + h)
-    p.arcTo(x, y + h - 2 * r, x + 2 * r, y + h, startAng=90, extent=90)
-    p.lineTo(x, y + r)
-    p.arcTo(x, y, x + 2 * r, y + 2 * r, startAng=180, extent=90)
-    p.close()
-
-
-# ================================================================ icone SVG-like
-def _icon_phone(c, cx, cy, size, color):
-    """Smartphone outline (match HTML SVG): rect verticale + barra tasto home."""
-    c.saveState()
-    c.setStrokeColor(color)
-    c.setLineWidth(size * 0.11)
-    c.setLineCap(1)
-    c.setLineJoin(1)
-    # HTML: rect x=6 y=2 w=12 h=20 rx=2.5 (viewBox 24)
-    w = size * 0.5
-    h = size * 0.83
-    x = cx - w / 2
-    y = cy - h / 2
-    rx = size * 0.104
-    c.roundRect(x, y, w, h, rx, stroke=1, fill=0)
-    # linea tasto home: path M10 18 h4 (viewBox 24)
-    # 10..14 su 24 = centro, y=18 su 24 = relativa
-    bar_w = size * (4 / 24)
-    # posizione y=18: 18/24 = 0.75 dall'alto nel viewBox (y_svg=0 top)
-    # nel nostro canvas invertito: y relativa a cy
-    bar_y = cy - h / 2 + h * (1 - 18 / 20)  # rect viewBox [2..22], 18 è a 16/20 dal basso
-    bar_y = cy - h * 0.33
-    c.line(cx - bar_w / 2, bar_y, cx + bar_w / 2, bar_y)
-    c.restoreState()
-
-
-def _icon_mail(c, cx, cy, size, color):
-    c.saveState()
-    c.setStrokeColor(color)
-    c.setLineWidth(size * 0.13)
-    c.setLineJoin(1)
-    w = size * 0.75
-    h = size * 0.55
-    x = cx - w / 2
-    y = cy - h / 2
-    c.rect(x, y, w, h, stroke=1, fill=0)
-    p = c.beginPath()
-    p.moveTo(x, y + h)
-    p.lineTo(cx, y + h * 0.4)
-    p.lineTo(x + w, y + h)
-    c.drawPath(p, stroke=1, fill=0)
-    c.restoreState()
-
-
-def _icon_insta(c, cx, cy, size, color):
-    c.saveState()
-    c.setStrokeColor(color)
-    c.setLineWidth(size * 0.12)
-    s = size * 0.7
-    c.roundRect(cx - s / 2, cy - s / 2, s, s, s * 0.22, stroke=1, fill=0)
-    c.circle(cx, cy, s * 0.22, stroke=1, fill=0)
-    c.setFillColor(color)
-    c.circle(cx + s * 0.28, cy + s * 0.28, s * 0.07, stroke=0, fill=1)
-    c.restoreState()
-
-
-def _icon_globe(c, cx, cy, size, color):
-    c.saveState()
-    c.setStrokeColor(color)
-    c.setLineWidth(size * 0.11)
-    r = size * 0.38
-    c.circle(cx, cy, r, stroke=1, fill=0)
-    p = c.beginPath()
-    p.moveTo(cx - r, cy)
-    p.lineTo(cx + r, cy)
-    p.moveTo(cx, cy - r)
-    p.lineTo(cx, cy + r)
-    c.drawPath(p, stroke=1, fill=0)
-    # ellipsi verticale
-    c.saveState()
-    c.translate(cx, cy)
-    c.scale(0.5, 1)
-    c.circle(0, 0, r, stroke=1, fill=0)
-    c.restoreState()
-    c.restoreState()
-
-
-def _icon_user(c, cx, cy, size, color):
-    c.saveState()
-    c.setFillColor(color)
-    r = size * 0.19
-    c.circle(cx, cy + size * 0.15, r, stroke=0, fill=1)
-    p = c.beginPath()
-    p.moveTo(cx - size * 0.32, cy - size * 0.35)
-    p.curveTo(cx - size * 0.32, cy - size * 0.05, cx + size * 0.32, cy - size * 0.05, cx + size * 0.32, cy - size * 0.35)
-    p.lineTo(cx - size * 0.32, cy - size * 0.35)
-    c.drawPath(p, stroke=0, fill=1)
-    c.restoreState()
-
-
-def _icon_target(c, cx, cy, size, color):
-    c.saveState()
-    c.setStrokeColor(color)
-    c.setLineWidth(size * 0.11)
-    r = size * 0.38
-    c.circle(cx, cy, r, stroke=1, fill=0)
-    c.circle(cx, cy, r * 0.55, stroke=1, fill=0)
-    c.setFillColor(color)
-    c.circle(cx, cy, r * 0.18, stroke=0, fill=1)
-    c.restoreState()
-
-
-def _icon_calendar(c, cx, cy, size, color):
-    c.saveState()
-    c.setStrokeColor(color)
-    c.setLineWidth(size * 0.1)
-    w = size * 0.7
-    h = size * 0.65
-    x = cx - w / 2
-    y = cy - h / 2
-    c.roundRect(x, y, w, h, size * 0.08, stroke=1, fill=0)
-    c.line(x, y + h * 0.7, x + w, y + h * 0.7)
-    c.line(x + w * 0.28, y + h, x + w * 0.28, y + h * 0.88)
-    c.line(x + w * 0.72, y + h, x + w * 0.72, y + h * 0.88)
-    c.restoreState()
-
-
-def _icon_layers(c, cx, cy, size, color):
-    """Manubrio (dumbbell): barra orizzontale + 2 pesi quadrati ai lati + anelli esterni."""
-    c.saveState()
-    c.setFillColor(color)
-    s = size * 0.9
-    # peso sinistro (grande)
-    plate_w = s * 0.18
-    plate_h = s * 0.5
-    r = s * 0.04
-    lx = cx - s / 2
-    c.roundRect(lx, cy - plate_h / 2, plate_w, plate_h, r, stroke=0, fill=1)
-    # peso destro
-    rx = cx + s / 2 - plate_w
-    c.roundRect(rx, cy - plate_h / 2, plate_w, plate_h, r, stroke=0, fill=1)
-    # ghiera esterna sinistra (piccola)
-    ring_w = s * 0.07
-    ring_h = s * 0.7
-    c.roundRect(lx - ring_w - s * 0.02, cy - ring_h / 2, ring_w, ring_h, r, stroke=0, fill=1)
-    # ghiera esterna destra
-    c.roundRect(rx + plate_w + s * 0.02, cy - ring_h / 2, ring_w, ring_h, r, stroke=0, fill=1)
-    # barra centrale
-    bar_h = s * 0.14
-    c.rect(lx + plate_w, cy - bar_h / 2, s - 2 * plate_w, bar_h, stroke=0, fill=1)
-    c.restoreState()
-
-
-def _icon_note(c, cx, cy, size, color):
-    """Matita filled stile simile a _icon_user/_icon_layers (filled shape)."""
-    c.saveState()
-    c.setFillColor(color)
-    c.translate(cx, cy)
-    c.rotate(-45)
-    s = size * 0.55
-    w = s * 0.45
-    h = s * 1.3
-    # corpo matita (rect)
-    c.rect(-w / 2, -h / 2 + s * 0.18, w, h - s * 0.3, stroke=0, fill=1)
-    # punta triangolare
-    p = c.beginPath()
-    p.moveTo(-w / 2, -h / 2 + s * 0.18)
-    p.lineTo(0, -h / 2 - s * 0.22)
-    p.lineTo(w / 2, -h / 2 + s * 0.18)
-    p.close()
-    c.drawPath(p, stroke=0, fill=1)
-    # gomma in alto (rect più chiaro)
-    c.setFillColor(_alpha(color, 0.55))
-    c.rect(-w / 2, h / 2 - s * 0.15, w, s * 0.15, stroke=0, fill=1)
-    c.restoreState()
-
-
-def _icon_play(c, cx, cy, size, color):
-    c.saveState()
-    c.setFillColor(color)
-    p = c.beginPath()
-    s = size * 0.5
-    p.moveTo(cx - s * 0.4, cy + s)
-    p.lineTo(cx - s * 0.4, cy - s)
-    p.lineTo(cx + s * 0.8, cy)
-    p.close()
-    c.drawPath(p, stroke=0, fill=1)
-    c.restoreState()
-
-
-# ================================================================== flowables
-class SheetBackground(Flowable):
-    """Riempie il frame con sfondo bianco (serve a creare l'illusione della card .sheet)."""
-    def __init__(self, width, height):
-        super().__init__()
-        self.w = width
-        self.h = height
-
-    def wrap(self, aw, ah):
-        return self.w, self.h
-
-    def draw(self):
-        c = self.canv
-        c.setFillColor(colors.white)
-        c.rect(0, 0, self.w, self.h, stroke=0, fill=1)
-
-
-class InfoCards(Flowable):
-    """Griglia .info-grid: tutte le card su una sola riga, larghezza divisa equamente."""
-    def __init__(self, items, width, brand, dark, soft, muted):
-        super().__init__()
-        self.items = items  # list[(icon_name, label, value)]
-        self.w = width
-        self.brand = brand
-        self.dark = dark
-        self.soft = soft
-        self.muted = muted
-        self.card_h = 8 * mm
-        self.gap = 1.2 * mm
-        self.h = self.card_h
-
-    def wrap(self, aw, ah):
-        return self.w, self.h
-
-    def draw(self):
-        c = self.canv
-        n = len(self.items)
-        if n == 0:
-            return
-        cw = (self.w - (n - 1) * self.gap) / n
-        x = 0
-        for icon_name, label, value in self.items:
-            self._draw_card(c, x, 0, cw, self.card_h, icon_name, label, value)
-            x += cw + self.gap
-
-    def _draw_card(self, c, x, y, w, h, icon_name, label, value):
-        _grad_soft_rect(c, x, y, w, h, self.soft, radius=7, border=_alpha(self.brand, 0.22))
-        # icon box
-        ib = 6 * mm
-        iy = y + (h - ib) / 2
-        ix = x + 1.3 * mm
-        _grad_rounded(c, ix, iy, ib, ib, _mix(self.brand, colors.HexColor("#ff5a5f"), 0.18),
-                      self.brand, self.dark, radius=1.5 * mm)
-        _get_icon(icon_name)(c, ix + ib / 2, iy + ib / 2, ib * 0.6, colors.white)
-        # testo: label in alto, valore in basso
-        tx = ix + ib + 1.8 * mm
-        avail = w - (tx - x) - 1.2 * mm
-        c.setFillColor(self.muted)
-        c.setFont("Helvetica-Bold", 5)
-        c.drawString(tx, y + h - 3.3 * mm, _truncate(label.upper(), avail, "Helvetica-Bold", 5))
-        c.setFillColor(self.dark)
-        val = _plain(value)
-        fs = 6.5
-        for test in (6.5, 6, 5.5, 5, 4.5):
-            if stringWidth(val, "Helvetica-Bold", test) <= avail:
-                fs = test
-                break
-            fs = test
-        c.setFont("Helvetica-Bold", fs)
-        c.drawString(tx, y + 2 * mm, _truncate(val, avail, "Helvetica-Bold", fs))
-
-
-def _get_icon(name):
-    return {
-        "user": _icon_user, "target": _icon_target, "calendar": _icon_calendar,
-        "layers": _icon_layers, "note": _icon_note, "play": _icon_play,
-        "phone": _icon_phone, "mail": _icon_mail, "instagram": _icon_insta, "globe": _icon_globe,
-    }.get(name, _icon_user)
-
-
-class SheetNotes(Flowable):
-    """Card .sheet-notes con gradient soft + bordo sx brand + icona + testo."""
-    def __init__(self, text, width, brand, dark, soft, muted):
-        super().__init__()
-        self.text = text
-        self.w = width
-        self.brand = brand
-        self.dark = dark
-        self.soft = soft
-        self.muted = muted
-        self.pad = 2 * mm
-        self.icon_box = 4.5 * mm
-        self.text_x = self.pad + self.icon_box + 1.5 * mm
-        self._lines = _wrap_lines(text, width - self.text_x - self.pad, "Helvetica", 7)
-        self.h = max(7 * mm, self.pad * 2 + len(self._lines) * 8 + 1)
-
-    def wrap(self, aw, ah):
-        return self.w, self.h
-
-    def draw(self):
-        c = self.canv
-        _grad_soft_rect(c, 0, 0, self.w, self.h, self.soft, radius=10, border=_alpha(self.brand, 0.12))
-        # barra sx brand
-        c.setFillColor(self.brand)
-        p = c.beginPath()
-        _round_path(p, 0, 0, 2 * mm, self.h, 2 * mm)
-        c.drawPath(p, stroke=0, fill=1)
-        # icona
-        _icon_note(c, self.pad + self.icon_box / 2, self.h - self.pad - self.icon_box / 2 + 0.5,
-                   self.icon_box * 0.9, self.brand)
-        # testo
-        c.setFillColor(colors.HexColor("#2a1a1f"))
-        c.setFont("Helvetica", 7.5)
-        y = self.h - self.pad - 7
-        for ln in self._lines:
-            c.drawString(self.text_x, y, ln)
-            y -= 9
-
-
-class DayBanner(Flowable):
-    """Banner giorno .day-banner: gradient rounded + '01' grande + eyebrow + titolo + note."""
-    def __init__(self, idx, name, day_notes, width, brand, dark):
-        super().__init__()
-        self.idx = idx
-        self.name = name or ""
-        self.day_notes = day_notes or ""
-        self.w = width
-        self.brand = brand
-        self.dark = dark
-        self.h = 7 * mm if self.day_notes else 5.5 * mm
-
-    def wrap(self, aw, ah):
-        return self.w, self.h
-
-    def draw(self):
-        c = self.canv
-        light = _mix(self.brand, colors.HexColor("#ff5a5f"), 0.18)
-        _grad_rounded(c, 0, 0, self.w, self.h, light, self.brand, self.dark, radius=3.5 * mm)
-        # cerchio decorativo top-right
-        c.saveState()
-        p = c.beginPath()
-        _round_path(p, 0, 0, self.w, self.h, 3.5 * mm)
-        c.clipPath(p, stroke=0, fill=0)
-        c.setFillColor(colors.Color(1, 1, 1, alpha=0.16))
-        c.circle(self.w - 8 * mm, self.h + 4 * mm, 22 * mm, stroke=0, fill=1)
-        c.restoreState()
-        # numero grande semi-trasparente destra
-        c.setFillColor(colors.Color(1, 1, 1, alpha=0.2))
-        num_font = 18 if self.day_notes else 15
-        c.setFont("Helvetica-Bold", num_font)
-        num = f"{self.idx:02d}"
-        tw = stringWidth(num, "Helvetica-Bold", num_font)
-        c.drawString(self.w - tw - 3 * mm, self.h / 2 - num_font * 0.32, num)
-        # testo
-        c.setFillColor(colors.Color(1, 1, 1, alpha=0.78))
-        c.setFont("Helvetica-Bold", 5)
-        c.drawString(3.5 * mm, self.h - 2.6 * mm, f"GIORNO {self.idx}")
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(3.5 * mm, self.h - 5.8 * mm, self.name)
-        if self.day_notes:
-            c.setFillColor(colors.Color(1, 1, 1, alpha=0.85))
-            c.setFont("Helvetica-Oblique", 6.5)
-            note = _truncate(self.day_notes, self.w - 25 * mm, "Helvetica-Oblique", 6.5)
-            c.drawString(3.5 * mm, self.h - 8.8 * mm, note)
-
-
-class ExerciseCard(Flowable):
-    """Card esercizio: bordo sx gradient brand→dark, immagine 4:3 + titolo + chip + params + note + link."""
-    IMG_W = IMG_W
-    IMG_H = IMG_H
-    PAD = 1.2 * mm
-    GAP = 2 * mm
-
-    def __init__(self, ex, index, width, brand, dark, soft, muted, line, upload_dir):
-        super().__init__()
-        self.ex = ex
-        self.index = index
-        self.w = width
-        self.brand = brand
-        self.dark = dark
-        self.soft = soft
-        self.muted = muted
-        self.line = line
-        self.upload_dir = upload_dir
-
-        # misure
-        self.img_area_w = self.IMG_W
-        self.right_x = self.PAD + self.img_area_w + self.GAP
-        self.right_w = width - self.right_x - self.PAD
-
-        # note vanno a destra della riga params (inline), non in blocco separato
-        # calcola altezza componenti
-        self._h_title = 3 * mm
-        self._gap_title_params = 0.5 * mm
-        self._h_params = 5.5 * mm if self._params() else 0
-        self._gap_params_link = 0.6 * mm if ex.get("link") else 0
-        self._h_link = 3.2 * mm if ex.get("link") else 0
-
-        content_h = (self._h_title + self._gap_title_params + self._h_params +
-                     self._gap_params_link + self._h_link)
-        self.h = max(self.PAD * 2 + self.IMG_H, self.PAD * 2 + content_h)
-
-    def _params(self):
-        return [(k, self.ex.get(f)) for k, f in (
-            ("SERIE", "sets"), ("RIPETIZIONI", "reps"), ("RECUPERO", "rest"),
-            ("CARICO", "load"), ("TUT", "tempo")) if self.ex.get(f)]
-
-    def wrap(self, aw, ah):
-        return self.w, self.h
-
-    def draw(self):
-        c = self.canv
-        # background card
-        _grad_soft_rect(c, 0, 0, self.w, self.h, colors.white, radius=4 * mm,
-                        border=_alpha(self.brand, 0.14))
-        # gradiente barra sinistra verticale
-        c.saveState()
-        p = c.beginPath()
-        _round_path(p, 0, 0, 2 * mm, self.h, 1.5 * mm)
-        c.clipPath(p, stroke=0, fill=0)
-        # vertical gradient brand → dark
-        steps = 40
-        sh = self.h / steps
-        for i in range(steps):
-            t = i / (steps - 1)
-            c.setFillColor(_mix(self.brand, self.dark, t))
-            c.rect(0, self.h - (i + 1) * sh, 2 * mm, sh + 0.5, stroke=0, fill=1)
-        c.restoreState()
-        # immagine / placeholder
-        self._draw_image(c)
-        # testi destra
-        self._draw_right(c)
-
-    def _draw_image(self, c):
-        iy = self.h - self.PAD - self.IMG_H
-        ix = self.PAD + 2 * mm
-        # cornice
-        c.saveState()
-        path = c.beginPath()
-        _round_path(path, ix, iy, self.IMG_W, self.IMG_H, 3 * mm)
-        c.clipPath(path, stroke=0, fill=0)
-        img_path = os.path.join(self.upload_dir, self.ex["image"]) if self.ex.get("image") else None
-        if img_path and os.path.isfile(img_path) and not img_path.lower().endswith(".svg"):
-            try:
-                reader = ImageReader(img_path)
-                iw, ih = reader.getSize()
-                scale = max(self.IMG_W / iw, self.IMG_H / ih)
-                dw = iw * scale
-                dh = ih * scale
-                c.drawImage(reader, ix + (self.IMG_W - dw) / 2, iy + (self.IMG_H - dh) / 2,
-                            dw, dh, mask="auto")
-            except Exception:
-                self._draw_placeholder(c, ix, iy)
-        else:
-            self._draw_placeholder(c, ix, iy)
-        c.restoreState()
-        # bordo sottile
-        c.setStrokeColor(self.line)
-        c.setLineWidth(0.5)
-        c.roundRect(ix, iy, self.IMG_W, self.IMG_H, 3 * mm, stroke=1, fill=0)
-        # badge numero esercizio in alto a sinistra
-        bx = ix + 1.5
-        by = iy + self.IMG_H - 4.5 * mm - 1.5
-        self._draw_num_badge(c, bx, by, 4.5 * mm, str(self.index + 1))
-
-    def _draw_placeholder(self, c, ix, iy):
-        _grad_h(c, ix, iy, self.IMG_W, self.IMG_H, _mix(self.brand, colors.white, 0.85), colors.white)
-        _icon_layers(c, ix + self.IMG_W / 2, iy + self.IMG_H / 2, 20 * mm, _alpha(self.brand, 0.6))
-
-    def _draw_num_badge(self, c, x, y, size, text):
-        r = size / 2
-        c.saveState()
-        # cerchio bianco bordo
-        c.setFillColor(colors.white)
-        c.circle(x + r, y + r, r + 0.8, stroke=0, fill=1)
-        # cerchio gradient
-        p = c.beginPath()
-        p.circle(x + r, y + r, r)
-        c.clipPath(p, stroke=0, fill=0)
-        _grad_diag(c, x, y, size, size, _mix(self.brand, colors.HexColor("#ff5a5f"), 0.2), self.brand, self.dark)
-        c.restoreState()
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", size * 0.52)
-        tw = stringWidth(text, "Helvetica-Bold", size * 0.52)
-        c.drawString(x + r - tw / 2, y + r - size * 0.18, text)
-
-    def _draw_right(self, c):
-        x = self.right_x
-        w = self.right_w
-        link = _url(self.ex.get("link"))
-        # cursor parte dal top, scende giù
-        top = self.h - self.PAD
-        # TITOLO
-        title_baseline = top - 2.3 * mm
-        name = _plain(self.ex.get("name"))
-        c.setFillColor(self.dark)
-        c.setFont("Helvetica-Bold", 8)
-        max_name_w = w - 20 * mm
-        name_disp = _truncate(name, max_name_w, "Helvetica-Bold", 8)
-        c.drawString(x, title_baseline, name_disp)
-        if link:
-            tw = stringWidth(name_disp, "Helvetica-Bold", 8)
-            c.setFillColor(self.brand)
-            c.drawString(x + tw + 2, title_baseline, "»")
-            c.linkURL(link, (x, title_baseline - 2, x + tw, title_baseline + 7),
-                      relative=1, thickness=0)
-        # CHIP muscle group a destra, allineato con titolo
-        muscle = _plain(self.ex.get("muscle_group")).upper()
-        if muscle:
-            self._draw_chip(c, x + w, title_baseline + 1, muscle)
-
-        cursor = top - self._h_title  # fondo blocco titolo
-        # PARAMS (ritorna x right-edge usato dai pill → serve per sapere dove iniziano note)
-        params_right_x = x
-        if self._params():
-            cursor -= self._gap_title_params
-            params_right_x = self._draw_params(c, x, cursor, w, self._params())
-            # NOTE inline a destra dei params, stesso y
-            if self.ex.get("notes"):
-                note_x = params_right_x + 3 * mm
-                note_w = x + w - note_x
-                if note_w > 20 * mm:
-                    _icon_note(c, note_x + 1.5, cursor - 2.3, 2.8 * mm, self.brand)
-                    c.setFillColor(colors.HexColor("#4a3a3f"))
-                    c.setFont("Helvetica", 7)
-                    text_x = note_x + 4 * mm
-                    lines = _wrap_lines(self.ex["notes"], note_w - 5 * mm, "Helvetica", 7)[:2]
-                    for i, ln in enumerate(lines):
-                        c.drawString(text_x, cursor - 2.8 - i * 8, ln)
-            cursor -= self._h_params
-        # LINK pill: ancorato al bottom card (allineato con bordo basso + barra sx)
-        if link:
-            pill_y = self.PAD
-            self._draw_video_pill(c, x, pill_y, link)
-
-    def _draw_params(self, c, x, y, w, params):
-        """Disegna pill params, ritorna x del right-edge dell'ultimo pill (per note inline)."""
-        c.saveState()
-        pw = 13 * mm
-        gap = 1 * mm
-        reserve = 22 * mm if self.ex.get("notes") else 0
-        avail_w = w - reserve
-        total = len(params) * pw + (len(params) - 1) * gap
-        if total > avail_w:
-            pw = (avail_w - (len(params) - 1) * gap) / len(params)
-            pw = max(pw, 10 * mm)
-        ph = 5.5 * mm
-        for i, (k, v) in enumerate(params):
-            px = x + i * (pw + gap)
-            _grad_soft_rect(c, px, y - ph, pw, ph, self.soft, radius=2 * mm, border=_alpha(self.brand, 0.12))
-            c.setFillColor(self.muted)
-            c.setFont("Helvetica-Bold", 4.5)
-            c.drawString(px + 1.3 * mm, y - 2.2 * mm, k)
-            c.setFillColor(self.dark)
-            c.setFont("Helvetica-Bold", 7.5)
-            c.drawString(px + 1.3 * mm, y - 5.3 * mm, _truncate(_plain(v), pw - 2.6 * mm, "Helvetica-Bold", 7.5))
-        c.restoreState()
-        return x + len(params) * pw + (len(params) - 1) * gap
-
-    def _draw_chip(self, c, x_right, y, text):
-        padx = 1.8 * mm
-        c.saveState()
-        c.setFont("Helvetica-Bold", 5.5)
-        tw = stringWidth(text, "Helvetica-Bold", 5.5)
-        chip_w = tw + 2 * padx
-        chip_h = 3.8 * mm
-        cx = x_right - chip_w
-        cy = y - 0.3 * mm
-        _grad_soft_rect(c, cx, cy, chip_w, chip_h, self.soft, radius=chip_h / 2,
-                        border=_alpha(self.brand, 0.25))
-        c.setFillColor(self.brand)
-        c.drawString(cx + padx, cy + chip_h / 2 - 1.6, text)
-        c.restoreState()
-
-    def _draw_video_pill(self, c, x, y, link):
-        c.saveState()
-        c.setFont("Helvetica-Bold", 6)
-        text = "Guarda l'esecuzione"
-        tw = stringWidth(text, "Helvetica-Bold", 6)
-        pad_r = 2 * mm
-        icon_size = 2.6 * mm
-        pill_h = 2.8 * mm
-        pill_w = icon_size + 2.5 * mm + tw + pad_r
-        _grad_rounded(c, x, y, pill_w, pill_h,
-                      _mix(self.brand, colors.HexColor("#ff5a5f"), 0.2), self.brand, self.dark,
-                      radius=pill_h / 2)
-        # cerchio background icona
-        c.setFillColor(_alpha(colors.white, 0.22))
-        c.circle(x + 1.5 * mm + icon_size / 2, y + pill_h / 2, icon_size / 2, stroke=0, fill=1)
-        _icon_play(c, x + 1.5 * mm + icon_size / 2, y + pill_h / 2, icon_size * 0.6, colors.white)
-        c.setFillColor(colors.white)
-        c.drawString(x + 1.5 * mm + icon_size + 2 * mm, y + pill_h / 2 - 2, text)
-        c.linkURL(link, (x, y, x + pill_w, y + pill_h), relative=1, thickness=0)
-        c.restoreState()
-
-
-# ========================================================================= build
-def build_pdf(program, settings, upload_dir, break_days=False):
-    brand = _hex(settings.get("primary_color"), "#8c1c3a")
-    dark = _hex(settings.get("secondary_color"), "#3a0d1a")
-    soft = _hex(settings.get("accent_color"), "#f6e9ed")
-    muted = colors.HexColor("#7a6a6f")
-    line = colors.HexColor("#e4dade")
-    light_brand = _mix(brand, colors.HexColor("#ff5a5f"), 0.18)
-
-    logo_path = os.path.join(upload_dir, settings["logo"]) if settings.get("logo") else None
-    logo = None
-    if logo_path and os.path.isfile(logo_path) and not logo_path.lower().endswith(".svg"):
+        return _render(url)
+    except PWError as e:
+        msg = str(e)
+        if "Executable doesn't exist" in msg or "playwright install" in msg:
+            _install_chromium()
+            return _render(url)
+        raise
+
+
+def _render(url: str) -> bytes:
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(args=[
+            "--no-sandbox",
+            "--font-render-hinting=none",
+            "--disable-font-subpixel-positioning",
+            "--disable-lcd-text",
+            "--force-color-profile=srgb",
+        ])
         try:
-            logo = ImageReader(logo_path)
-        except Exception:
-            logo = None
-    contacts_raw = []
-    for icon, val in [("phone", settings.get("contact_phone")),
-                      ("mail", settings.get("contact_email")),
-                      ("instagram", settings.get("contact_social")),
-                      ("globe", settings.get("website"))]:
-        if val:
-            contacts_raw.append((icon, val))
+            # Viewport = A4 @ 96dpi (794 x 1123 px)
+            ctx = browser.new_context(
+                viewport={"width": 794, "height": 1123},
+                device_scale_factor=2,
+            )
+            page = ctx.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            # Attendi scheda e immagini
+            page.wait_for_selector("#sheet", state="attached", timeout=30000)
+            page.wait_for_function(
+                "Array.from(document.images).every(i => i.complete && i.naturalWidth > 0)",
+                timeout=20000,
+            )
+            # Attendi che tutti i font siano effettivamente caricati (await Promise)
+            page.evaluate("async () => { if (document.fonts) await document.fonts.ready; }")
+            # Piccola pausa per animazioni/layout stabile
+            page.wait_for_timeout(400)
 
-    # ------------------------------------------------------------- page bg/foot
-    def _draw_sheet_bg(c, _doc):
-        """Riempie la pagina con lo sfondo chiaro + card .sheet bianca su cui appoggia tutto."""
-        c.setFillColor(colors.HexColor("#f6ecee"))  # bg body chiaro
-        c.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
-        # card sheet
-        c.setFillColor(colors.white)
-        c.rect(CARD_X, 0, CARD_W, PAGE_H, stroke=0, fill=1)
+            # Emula media "screen" così CSS @media print non si applica
+            page.emulate_media(media="screen")
 
-    def _draw_sheet_head(c, draw_logo=True):
-        """Testata colorata + clip-path diagonale + decorazioni + brand + contacts."""
-        hx, hy, hw, hh = CARD_X, PAGE_H - HEAD_H, CARD_W, HEAD_H
-        c.saveState()
-        # clip-path polygon(0 0, 100% 0, 100% 78%, 0 100%)
-        p = c.beginPath()
-        p.moveTo(hx, hy + hh)
-        p.lineTo(hx + hw, hy + hh)
-        p.lineTo(hx + hw, hy + hh * 0.22)
-        p.lineTo(hx, hy)
-        p.close()
-        c.clipPath(p, stroke=0, fill=0)
-        _grad_diag(c, hx, hy, hw, hh, light_brand, brand, dark)
-        # deco-1 cerchio grande alto-destra radial semitrasparente
-        c.setFillColor(_alpha(colors.white, 0.18))
-        c.circle(hx + hw - 24 * mm, hy + hh + 6 * mm, 60 * mm, stroke=0, fill=1)
-        # deco-2 anello basso destra
-        c.setStrokeColor(_alpha(colors.white, 0.08))
-        c.setLineWidth(8)
-        c.circle(hx + hw - 90 * mm, hy - 20 * mm, 32 * mm, stroke=1, fill=0)
-        # deco-3 banda inclinata chiara sinistra alta
-        c.saveState()
-        c.translate(hx + 20 * mm, hy + hh - 10 * mm)
-        c.rotate(-8)
-        c.setFillColor(_alpha(colors.white, 0.08))
-        c.rect(-20 * mm, 0, 150 * mm, 12 * mm, stroke=0, fill=1)
-        c.restoreState()
-        c.restoreState()
+            # Isola la scheda: nascondi UI non-scheda, azzera padding body,
+            # rimuovi shadow/radius dalle .page così ogni pagina riempie A4
+            # Risolve color-mix e gradient delle card/numeri a colori flat per compat viewer PDF
+            page.add_style_tag(content="""
+                html, body { background: #ffffff !important; margin: 0 !important; padding: 0 !important; }
+                .topbar, .toast, dialog, #toast, #update-badge { display: none !important; }
+                main { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+                .no-print { display: none !important; }
+                .sheet { gap: 0 !important; }
+                .page { box-shadow: none !important; border-radius: 0 !important; margin: 0 !important; }
+                /* Esercizio card: sostituisci shadow/color-mix con border piatto */
+                .sheet-ex {
+                    box-shadow: none !important;
+                    border: 1px solid var(--brand) !important;
+                    background: #ffffff !important;
+                }
+                /* Badge numero: colore pieno invece di gradient */
+                .ex-num {
+                    background: var(--brand) !important;
+                    background-image: none !important;
+                    box-shadow: none !important;
+                    color: #ffffff !important;
+                }
+                /* Pulsante "Guarda l'esecuzione": flat */
+                .sheet-video {
+                    background: var(--brand) !important;
+                    background-image: none !important;
+                    box-shadow: none !important;
+                    color: #ffffff !important;
+                    border: none !important;
+                }
+                /* Info-card: bordo piatto, no shadow, bg bianco */
+                .info-card {
+                    background: #ffffff !important;
+                    background-image: none !important;
+                    box-shadow: none !important;
+                    border: 1px solid var(--brand) !important;
+                }
+                .info-ico {
+                    background: var(--brand) !important;
+                    background-image: none !important;
+                    box-shadow: none !important;
+                    color: #ffffff !important;
+                }
+                /* Eyebrow: background-clip:text non supportato da tutti viewer → colore pieno */
+                .eyebrow {
+                    background: none !important;
+                    background-image: none !important;
+                    -webkit-background-clip: border-box !important;
+                    background-clip: border-box !important;
+                    color: var(--brand) !important;
+                }
+            """)
+            # Riesegui split pagine dopo cambi stile
+            page.evaluate("typeof splitOverflowPages === 'function' && splitOverflowPages()")
+            # Reflow
+            page.wait_for_timeout(200)
 
-        # contenuto head (brand sx, contatti dx) con padding 34/40
-        pad_x = 14 * mm
-        center_y = hy + hh / 2 + 3 * mm
-        bx = hx + pad_x
-        if draw_logo and logo:
-            iw, ih = logo.getSize()
-            tile_h = 24 * mm
-            scale = tile_h / ih
-            logo_w = iw * scale
-            if logo_w > 44 * mm:
-                logo_w = 44 * mm
-                scale = logo_w / iw
-                tile_h = ih * scale
-            tile_pad = 2 * mm
-            tile_w = logo_w + 2 * tile_pad
-            tile_h2 = tile_h + 2 * tile_pad
-            # shadow
-            c.setFillColor(_alpha(colors.black, 0.18))
-            c.roundRect(bx + 1.5, center_y - tile_h2 / 2 - 1.5, tile_w, tile_h2, 3 * mm, stroke=0, fill=1)
-            # tile
-            c.setFillColor(colors.white)
-            c.roundRect(bx, center_y - tile_h2 / 2, tile_w, tile_h2, 3 * mm, stroke=0, fill=1)
-            c.drawImage(logo, bx + tile_pad, center_y - tile_h / 2, logo_w, tile_h, mask="auto")
-            bx += tile_w + 5 * mm
-        # brand name
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 20)
-        c.drawString(bx, center_y + 3 * mm, settings.get("brand_name") or "")
-        # brand sub pill
-        sub = (settings.get("brand_subtitle") or "").upper()
-        if sub:
-            c.setFont("Helvetica-Bold", 6.5)
-            sw = stringWidth(sub, "Helvetica-Bold", 6.5)
-            pill_w = sw + 10
-            pill_h = 5 * mm
-            px = bx
-            py = center_y - 4.5 * mm
-            c.setFillColor(_alpha(colors.white, 0.14))
-            c.roundRect(px, py - pill_h + 1, pill_w, pill_h, pill_h / 2, stroke=0, fill=1)
-            c.setStrokeColor(_alpha(colors.white, 0.25))
-            c.setLineWidth(0.5)
-            c.roundRect(px, py - pill_h + 1, pill_w, pill_h, pill_h / 2, stroke=1, fill=0)
-            c.setFillColor(_alpha(colors.white, 0.95))
-            c.drawString(px + 5, py - 3 * mm, sub)
-
-        # contacts: blocco allineato a destra, dentro il blocco icone colonna SX + testo DX
-        cx_right = hx + hw - pad_x
-        gap = 7 * mm
-        icon_size = 5 * mm
-        icon_text_gap = 3 * mm
-        # calcola larghezza max testo per allineare icone
-        max_txt_w = 0
-        for _, val in contacts_raw:
-            tw = stringWidth(_plain(val), "Helvetica", 9)
-            if tw > max_txt_w:
-                max_txt_w = tw
-        block_w = icon_size + icon_text_gap + max_txt_w
-        block_right = cx_right
-        icon_col_cx = block_right - block_w + icon_size / 2
-        text_x = icon_col_cx + icon_size / 2 + icon_text_gap
-        total_h = max(0, len(contacts_raw) * gap)
-        start_y = center_y + total_h / 2 - 2 * mm
-        for icon_name, val in contacts_raw:
-            val_str = _plain(val)
-            icon_cy = start_y
-            c.setFillColor(_alpha(colors.white, 0.16))
-            c.circle(icon_col_cx, icon_cy, icon_size / 2 + 0.6, stroke=0, fill=1)
-            c.setStrokeColor(_alpha(colors.white, 0.35))
-            c.setLineWidth(0.4)
-            c.circle(icon_col_cx, icon_cy, icon_size / 2 + 0.6, stroke=1, fill=0)
-            _get_icon(icon_name)(c, icon_col_cx, icon_cy, icon_size * 0.75, colors.white)
-            c.setFillColor(colors.white)
-            c.setFont("Helvetica", 9)
-            c.drawString(text_x, icon_cy - 2.3, val_str)
-            start_y -= gap
-
-    def _draw_sheet_foot(c):
-        fy = 0
-        fx = CARD_X
-        fw = CARD_W
-        fh = FOOT_H
-        c.saveState()
-        # clip path triangolo (polygon(0 32%, 100% 0, 100% 100%, 0 100%))
-        p = c.beginPath()
-        p.moveTo(fx, fy)
-        p.lineTo(fx + fw, fy)
-        p.lineTo(fx + fw, fy + fh)
-        p.lineTo(fx, fy + fh * 0.68)
-        p.close()
-        c.clipPath(p, stroke=0, fill=0)
-        _grad_diag(c, fx, fy, fw, fh, light_brand, brand, dark)
-        c.restoreState()
-        # motto + brand
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-BoldOblique", 10.5)
-        c.drawString(fx + 14 * mm, fy + fh / 2 - 4, settings.get("footer_text") or "")
-        c.setFont("Helvetica-Bold", 9)
-        brand_txt = settings.get("brand_name") or ""
-        bw = stringWidth(brand_txt, "Helvetica-Bold", 9)
-        c.drawString(fx + fw - 14 * mm - bw, fy + fh / 2 - 4, brand_txt)
-        # numero pagina
-        c.setFont("Helvetica", 7)
-        c.setFillColor(_alpha(colors.white, 0.75))
-        c.drawRightString(fx + fw - 14 * mm, fy + 3 * mm, f"Pag. {c.getPageNumber()}")
-
-    def _draw_small_head(c):
-        hx, hy, hw, hh = CARD_X, PAGE_H - SMALL_HEAD_H, CARD_W, SMALL_HEAD_H
-        _grad_h(c, hx, hy, hw, hh, dark, brand)
-        c.setFillColor(brand)
-        c.rect(hx, hy - 1 * mm, hw, 1 * mm, stroke=0, fill=1)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(hx + 10 * mm, hy + hh / 2 - 3, settings.get("brand_name") or "")
-        c.setFont("Helvetica", 8.5)
-        right = program.get("title") or ""
-        if program.get("athlete_name"):
-            right += "  ·  " + program["athlete_name"]
-        c.drawRightString(hx + hw - 10 * mm, hy + hh / 2 - 3, right)
-
-    def first_page(c, doc):
-        c.saveState()
-        _draw_sheet_bg(c, doc)
-        _draw_sheet_head(c, draw_logo=True)
-        _draw_sheet_foot(c)
-        c.restoreState()
-
-    def later_page(c, doc):
-        c.saveState()
-        _draw_sheet_bg(c, doc)
-        _draw_small_head(c)
-        _draw_sheet_foot(c)
-        c.restoreState()
-
-    # ------------------------------------------------------------------ content
-    styles = {
-        "eyebrow": ParagraphStyle("eyebrow", fontName="Helvetica-Bold", fontSize=6.5, leading=8,
-                                  textColor=brand, spaceAfter=1),
-        "h1": ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=16, leading=19,
-                             textColor=dark, spaceAfter=2),
-    }
-    story = []
-    story.append(Spacer(1, 2 * mm))
-    story.append(Paragraph("SCHEDA DI ALLENAMENTO", styles["eyebrow"]))
-    story.append(Paragraph(_t(program.get("title")), styles["h1"]))
-
-    # info items
-    info_items = []
-    if program.get("athlete_name"):
-        info_items.append(("user", "ATLETA", program["athlete_name"]))
-    if program.get("goal"):
-        info_items.append(("target", "OBIETTIVO", program["goal"]))
-    if program.get("start_date") or program.get("end_date"):
-        info_items.append(("calendar", "PERIODO",
-                           f'{_fmt_date(program.get("start_date")) or "…"} → {_fmt_date(program.get("end_date")) or "…"}'))
-    info_items.append(("layers", "GIORNI", str(len(program["days"]))))
-    if info_items:
-        story.append(InfoCards(info_items, CONTENT_W, brand, dark, soft, muted))
-        story.append(Spacer(1, 1.5 * mm))
-    if program.get("notes"):
-        story.append(SheetNotes(program["notes"], CONTENT_W, brand, dark, soft, muted))
-        story.append(Spacer(1, 1 * mm))
-
-    for di, day in enumerate(program["days"]):
-        if break_days and di > 0:
-            story.append(PageBreak())
-        else:
-            story.append(Spacer(1, 1.5 * mm))
-        story.append(CondPageBreak(IMG_H + 10 * mm))
-        story.append(DayBanner(di + 1, day.get("name"), day.get("notes"), CONTENT_W, brand, dark))
-        story.append(Spacer(1, 1 * mm))
-        if not day["exercises"]:
-            style_empty = ParagraphStyle("empty", fontName="Helvetica-Oblique", fontSize=9,
-                                         textColor=muted, leading=12)
-            story.append(Paragraph("Nessun esercizio.", style_empty))
-        for ei, ex in enumerate(day["exercises"]):
-            story.append(CondPageBreak(IMG_H + 4 * mm))
-            story.append(ExerciseCard(ex, ei, CONTENT_W, brand, dark, soft, muted, line, upload_dir))
-            story.append(Spacer(1, 0.7 * mm))
-
-    buf = io.BytesIO()
-    doc = BaseDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=CARD_X + INNER_PAD_X, rightMargin=CARD_X + INNER_PAD_X,
-        topMargin=HEAD_H + 4 * mm, bottomMargin=FOOT_H + 6 * mm,
-        title=program.get("title") or "Scheda", author=settings.get("brand_name") or "",
-    )
-    frame_first = Frame(CARD_X + INNER_PAD_X, FOOT_H + 6 * mm, CONTENT_W,
-                        PAGE_H - HEAD_H - 4 * mm - FOOT_H - 6 * mm, id="f1",
-                        leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
-    frame_later = Frame(CARD_X + INNER_PAD_X, FOOT_H + 6 * mm, CONTENT_W,
-                        PAGE_H - SMALL_HEAD_H - 6 * mm - FOOT_H - 6 * mm, id="f2",
-                        leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
-    first = PageTemplate(id="first", onPage=first_page, frames=[frame_first])
-    later = PageTemplate(id="later", onPage=later_page, frames=[frame_later])
-    first.autoNextPageTemplate = "later"
-    later.autoNextPageTemplate = "later"
-    doc.addPageTemplates([first, later])
-    doc.build(story)
-    return buf.getvalue()
+            # Misura altezza reale scheda per pagina senza whitespace
+            pdf_bytes = page.pdf(
+                width="210mm",
+                height="297mm",
+                print_background=True,
+                margin={"top": "0mm", "right": "0mm", "bottom": "0mm", "left": "0mm"},
+                prefer_css_page_size=False,
+                scale=1.0,
+                tagged=True,
+            )
+        finally:
+            browser.close()
+    return pdf_bytes

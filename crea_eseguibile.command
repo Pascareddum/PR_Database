@@ -53,14 +53,28 @@ fi
 echo "  Installo le dipendenze (serve Internet la prima volta)..."
 uv pip install --python "$VPY" -r requirements.txt pyinstaller
 
-# ---------------------------------------------------------------- 5) build
+# ---------------------------------------------------------------- 5) Chromium
+# Playwright richiede Chromium (~130MB). Scaricato per l'architettura corrente
+# del Mac (Intel oppure Apple Silicon). L'utente finale avrà download automatico
+# al primo PDF se mancante (vedi pdf.py _install_chromium).
+echo "  Scarico Chromium per Playwright (~130MB, solo prima volta)..."
+"$VPY" -m playwright install chromium
+
+# ---------------------------------------------------------------- 6) build
 echo "  Creo l'eseguibile, attendi..."
 rm -rf build
 # Su macOS il separatore di --add-data è ":" (non ";" come su Windows).
 # NIENTE --windowed: lascia visibile la finestra del Terminale per poter
 # spegnere il programma chiudendola, come su Windows.
+# NOTA architettura: --onefile produce un binario per l'architettura della
+# macchina corrente. Su Apple Silicon il bundle è arm64, su Intel è x86_64.
+# Per distribuire a entrambi: eseguire questo script una volta su Mac Intel
+# (o via "arch -x86_64 /bin/bash crea_eseguibile.command" con Rosetta 2 +
+# Python x86_64) e una volta su Apple Silicon, generando 2 binari distinti.
 "$VPY" -m PyInstaller --noconfirm --clean --onefile --name LeSchede \
   --add-data "$PWD/static:static" \
+  --collect-all playwright \
+  --hidden-import playwright.sync_api \
   --distpath "$PWD/dist" --workpath "$PWD/build" --specpath "$PWD/build" \
   "$PWD/app.py"
 

@@ -31,11 +31,18 @@ echo  Installo le dipendenze ^(serve Internet la prima volta^)...
 "%VPY%" -m pip install --quiet --disable-pip-version-check -r requirements.txt pyinstaller
 if errorlevel 1 goto :errore
 
+REM --------------------------------------------- Chromium per Playwright (PDF)
+echo  Scarico Chromium per Playwright ^(~130MB, solo prima volta^)...
+"%VPY%" -m playwright install chromium
+if errorlevel 1 goto :errore
+
 REM ---------------------------------------------------------------- build
 echo  Creo l'eseguibile, attendi...
 if exist "build" rmdir /s /q "build"
 "%VPY%" -m PyInstaller --noconfirm --clean --onefile --name LeSchede ^
   --add-data "%~dp0static;static" ^
+  --collect-all playwright ^
+  --hidden-import playwright.sync_api ^
   --distpath "%~dp0dist" --workpath "%~dp0build" --specpath "%~dp0build" ^
   "%~dp0app.py"
 if errorlevel 1 (
