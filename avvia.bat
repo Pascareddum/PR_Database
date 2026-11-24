@@ -24,7 +24,7 @@ if not exist "%VPY%" (
 )
 
 REM ------------------------------------------- dipendenze (solo se mancano: poi va anche offline)
-"%VPY%" -c "import flask, reportlab" >nul 2>nul
+"%VPY%" -c "import flask, reportlab, certifi" >nul 2>nul
 if errorlevel 1 (
   echo  Installo le dipendenze ^(serve Internet^)...
   "%VPY%" -m pip install --quiet --disable-pip-version-check -r requirements.txt

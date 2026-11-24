@@ -75,7 +75,7 @@ if ! "$VPY" -m pip --version >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------- dipendenze
-if ! "$VPY" -c "import flask, reportlab" >/dev/null 2>&1; then
+if ! "$VPY" -c "import flask, reportlab, certifi" >/dev/null 2>&1; then
   echo "  Installo le dipendenze (serve Internet)..."
   "$VPY" -m pip install --quiet --disable-pip-version-check -r requirements.txt
 fi

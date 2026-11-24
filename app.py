@@ -609,6 +609,33 @@ def _ver_tuple(s):
     return tuple(out) if out else (0,)
 
 
+_SSL_CTX = None
+
+
+def _ssl_context():
+    """Contesto SSL per HTTPS verso GitHub.
+    1) truststore: usa i certificati del sistema operativo (Keychain macOS /
+       store Windows) -> funziona anche con antivirus/proxy che ispezionano HTTPS.
+    2) certifi: bundle CA di Mozilla (utile se Python non trova CA di sistema).
+    3) default di Python."""
+    global _SSL_CTX
+    if _SSL_CTX is not None:
+        return _SSL_CTX
+    import ssl
+    ctx = None
+    try:
+        import truststore
+        ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:
+        try:
+            import certifi
+            ctx = ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            ctx = ssl.create_default_context()
+    _SSL_CTX = ctx
+    return ctx
+
+
 _RELEASE_CACHE = {"data": None, "fetched": 0.0, "error": None}
 _RELEASE_TTL = 900  # 15 minuti: evita il rate-limit GitHub (60 req/ora/IP anonimi)
 
@@ -631,7 +658,7 @@ def _fetch_latest_release(force=False):
         "Accept": "application/vnd.github+json",
     })
     try:
-        with urllib.request.urlopen(req, timeout=8) as r:
+        with urllib.request.urlopen(req, timeout=8, context=_ssl_context()) as r:
             data = _json.loads(r.read())
         _RELEASE_CACHE["data"] = data
         _RELEASE_CACHE["fetched"] = now
@@ -717,7 +744,7 @@ def _apply_update(info, force=False):
     tmp_zip.close()
     try:
         req = urllib.request.Request(zip_url, headers={"User-Agent": "LeSchede-updater"})
-        with urllib.request.urlopen(req, timeout=120) as r, open(tmp_zip.name, "wb") as out:
+        with urllib.request.urlopen(req, timeout=120, context=_ssl_context()) as r, open(tmp_zip.name, "wb") as out:
             shutil.copyfileobj(r, out)
     except Exception as e:
         try: os.remove(tmp_zip.name)
